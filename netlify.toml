@@ -1,0 +1,5 @@
+# CipherCheck is a static site in ciphercheck/ with no build step.
+# This overrides the dashboard settings, which point at the mockup sandbox.
+[build]
+  command = "echo 'CipherCheck is static; no build required'"
+  publish = "ciphercheck"

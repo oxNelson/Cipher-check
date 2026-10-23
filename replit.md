@@ -1,45 +1,47 @@
-# [Project name]
+# CipherCheck
 
-_Replace the heading above with the project's name, and this line with one sentence describing what this app does for users._
+A static, browser-only password auditor and Web Crypto password generator.
 
 ## Run & Operate
 
-- `pnpm --filter @workspace/api-server run dev` — run the API server (port 5000)
-- `pnpm run typecheck` — full typecheck across all packages
-- `pnpm run build` — typecheck + build all packages
-- `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from the OpenAPI spec
-- `pnpm --filter @workspace/db run push` — push DB schema changes (dev only)
-- Required env: `DATABASE_URL` — Postgres connection string
+- The `CipherCheck preview` workflow serves `ciphercheck/` as static files on port 8000.
+- To run the preview manually from the repository root: `python3 -m http.server 8000 --bind 0.0.0.0 --directory ciphercheck`
+- Netlify: base directory `ciphercheck`, no build command, publish directory `.`
+- No environment variables or package installation are required for the app.
 
 ## Stack
 
-- pnpm workspaces, Node.js 24, TypeScript 5.9
-- API: Express 5
-- DB: PostgreSQL + Drizzle ORM
-- Validation: Zod (`zod/v4`), `drizzle-zod`
-- API codegen: Orval (from OpenAPI spec)
-- Build: esbuild (CJS bundle)
+- App: HTML5, CSS3, vanilla JavaScript, and browser Web Crypto API.
+- Static files only; the app does not use the workspace API server, database, authentication, frameworks, build tools, or external libraries.
+- The repository's shared pnpm/API files are workspace scaffolding and are not part of the CipherCheck app.
 
 ## Where things live
 
-_Populate as you build — short repo map plus pointers to the source-of-truth file for DB schema, API contracts, theme files, etc._
+- `ciphercheck/index.html` — app structure
+- `ciphercheck/style.css` — responsive styling
+- `ciphercheck/script.js` — local password analysis and secure generator
+- `ciphercheck/README.md` — scoring rules, detector limits, and Netlify setup
 
 ## Architecture decisions
 
-_Populate as you build — non-obvious choices a reader couldn't infer from the code (3-5 bullets)._
+- Password analysis and generation run only in the browser; entered passwords are not sent or saved.
+- Strength labels come from documented, deterministic rules and are not attack probabilities or breach results.
+- Netlify publishes the static `ciphercheck/` directory without a build step.
 
 ## Product
 
-_Describe the high-level user-facing capabilities of this app once they exist._
+Users can inspect password length, character categories, repetition, sequences, common patterns, and repeated sequences; see a five-band rule-based classification; and generate and copy passwords with configurable character categories.
 
 ## User preferences
 
-_Populate as you build — explicit user instructions worth remembering across sessions._
+- The supplied SRS is authoritative. Do not add features or imply breach detection without a genuine integration.
 
 ## Gotchas
 
-_Populate as you build — sharp edges, "always run X before Y" rules._
+- Do not add a native form submission, network request, password persistence, backend, database, framework, build tool, or external dependency to the app.
+- Use `crypto.getRandomValues()` for password generation; never use `Math.random()`.
+- Clipboard access can be denied by the browser; preserve explicit failure feedback.
 
 ## Pointers
 
-- See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and package details
+- See `ciphercheck/README.md` for the implemented rules, score thresholds, limitations, and Netlify configuration.

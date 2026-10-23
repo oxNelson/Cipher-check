@@ -1,0 +1,272 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="Check password strength and generate secure passwords in your browser. Passwords are not sent or saved by CipherCheck."
+    />
+    <meta name="theme-color" content="#f4f6f3" />
+    <title>CipherCheck — Password Security Auditor</title>
+    <link rel="stylesheet" href="./style.css" />
+    <script src="./script.js" defer></script>
+  </head>
+  <body>
+    <div class="page-shell">
+      <header class="topbar">
+        <a class="brand" href="./" aria-label="CipherCheck home">
+          <span class="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 32 32" fill="none">
+              <path
+                d="M16 3.5 27 7.7v7.2c0 7.1-4.5 11.8-11 13.6C9.5 26.7 5 22 5 14.9V7.7L16 3.5Z"
+                stroke="currentColor"
+                stroke-width="1.7"
+              />
+              <path
+                d="m11.8 15.7 2.8 2.8 5.8-6.2"
+                stroke="currentColor"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="1.8"
+              />
+            </svg>
+          </span>
+          <span class="brand-name">cipher<span>check</span></span>
+        </a>
+
+        <div class="privacy-pill">
+          <span class="privacy-dot" aria-hidden="true"></span>
+          <span>Analysis stays in this browser</span>
+        </div>
+      </header>
+
+      <main>
+        <section class="intro" aria-labelledby="page-title">
+          <p class="eyebrow"><span class="eyebrow-line"></span> Password security auditor</p>
+          <h1 id="page-title">A clearer view of<br /><span>password strength.</span></h1>
+          <p class="intro-copy">
+            Check for short length, repeated characters, sequences, and common constructions.
+            Generate a stronger alternative when you need one.
+          </p>
+          <div class="privacy-note">
+            <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
+              <rect x="4.25" y="8.5" width="11.5" height="8" rx="1.6" stroke="currentColor" stroke-width="1.4" />
+              <path d="M6.7 8.5V6.2a3.3 3.3 0 0 1 6.6 0v2.3M10 11.5v2" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
+            </svg>
+            <span><strong>Private by design.</strong> Passwords are neither transmitted nor saved by this app.</span>
+          </div>
+        </section>
+
+        <div class="workbench">
+          <section class="panel analyzer-panel" aria-labelledby="analyzer-title">
+            <div class="panel-heading">
+              <div>
+                <p class="panel-kicker">01 / Evaluate</p>
+                <h2 id="analyzer-title">Password analysis</h2>
+              </div>
+              <span class="local-tag">LOCAL ONLY</span>
+            </div>
+
+            <div id="analyzerForm" role="group" aria-label="Password analysis">
+              <label class="field-label" for="passwordInput">Enter a password</label>
+              <div class="password-entry">
+                <input
+                  id="passwordInput"
+                  name="password"
+                  type="password"
+                  autocomplete="new-password"
+                  autocapitalize="off"
+                  spellcheck="false"
+                  required
+                  aria-describedby="passwordHint"
+                  data-testid="input-password"
+                />
+                <button class="button button-primary analyze-button" id="analyzeButton" type="button" data-testid="button-analyze">
+                  Analyze
+                  <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
+                    <path d="M4 10h11m-4.5-4.5L15 10l-4.5 4.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+                  </svg>
+                </button>
+              </div>
+              <p class="field-hint" id="passwordHint">Results update as you type. The value is used only for this local check.</p>
+            </div>
+
+            <div class="analysis-results" id="analysisResults" hidden aria-live="polite">
+              <div class="result-topline">
+                <div>
+                  <p class="result-label">Rule-based assessment</p>
+                  <h3 id="strengthLabel">—</h3>
+                </div>
+                <p class="score-readout"><span id="scoreValue">0</span><span class="score-out-of"> / 100</span></p>
+              </div>
+
+              <div
+                class="strength-track"
+                id="strengthMeter"
+                role="meter"
+                aria-label="Rule-based password strength score"
+                aria-valuemin="0"
+                aria-valuemax="100"
+                aria-valuenow="0"
+                aria-valuetext="No score"
+              >
+                <span class="strength-fill" id="strengthFill"></span>
+              </div>
+
+              <dl class="score-components" aria-label="Score factors">
+                <div class="score-component">
+                  <dt>Length</dt>
+                  <dd><strong id="lengthPoints">0 / 40</strong><span id="lengthDetail">—</span></dd>
+                </div>
+                <div class="score-component">
+                  <dt>Character variety</dt>
+                  <dd><strong id="categoryPoints">0 / 20</strong><span id="categoryDetail">—</span></dd>
+                </div>
+                <div class="score-component">
+                  <dt>Unique characters</dt>
+                  <dd><strong id="uniquenessPoints">0 / 15</strong><span id="uniquenessDetail">—</span></dd>
+                </div>
+                <div class="score-component">
+                  <dt>Pattern resistance</dt>
+                  <dd><strong id="patternPoints">0 / 25</strong><span id="patternDetail">—</span></dd>
+                </div>
+              </dl>
+
+              <p class="assessment-summary" id="assessmentSummary"></p>
+
+              <div class="findings-heading">
+                <h4>Detected factors</h4>
+                <span id="findingCount">0 findings</span>
+              </div>
+              <ul class="findings-list" id="findingsList"></ul>
+
+              <details class="scoring-details">
+                <summary>How this score is calculated</summary>
+                <div class="details-copy">
+                  <p>
+                    The 0–100 score adds length (0–40), character categories (0–20), unique
+                    characters (0–15), and a pattern-resistance component (0–25). Detected
+                    weaknesses reduce the pattern-resistance component. It is a rule-based
+                    comparison, not a probability or estimate of attack time.
+                  </p>
+                  <p>
+                    Bands: Very Weak 0–19; Weak 20–39; Fair 40–64; Strong 65–84; Very Strong
+                    85–100. The rules are documented in the README.
+                  </p>
+                </div>
+              </details>
+            </div>
+
+            <p class="scope-note">
+              CipherCheck does not check breach databases. No findings does not guarantee that a password is safe.
+            </p>
+          </section>
+
+          <section class="panel generator-panel" aria-labelledby="generator-title">
+            <div class="panel-heading">
+              <div>
+                <p class="panel-kicker">02 / Create</p>
+                <h2 id="generator-title">Password generator</h2>
+              </div>
+              <span class="generator-mark" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none">
+                  <path d="M12 3v3m0 12v3M3 12h3m12 0h3M5.64 5.64l2.12 2.12m8.48 8.48 2.12 2.12m0-12.72-2.12 2.12m-8.48 8.48-2.12 2.12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
+                  <circle cx="12" cy="12" r="4" stroke="currentColor" stroke-width="1.5" />
+                </svg>
+              </span>
+            </div>
+
+            <div class="generator-controls">
+              <div class="length-row">
+                <label class="field-label" for="lengthInput">Password length</label>
+                <div class="length-input-wrap">
+                  <input
+                    id="lengthInput"
+                    class="length-input"
+                    type="number"
+                    inputmode="numeric"
+                    min="1"
+                    max="64"
+                    step="1"
+                    value="20"
+                    aria-describedby="lengthHint"
+                    data-testid="input-length"
+                  />
+                  <span>characters</span>
+                </div>
+              </div>
+              <p class="field-hint length-hint" id="lengthHint">Choose a length from 1 to 64.</p>
+
+              <fieldset class="category-fieldset">
+                <legend class="field-label">Include character types</legend>
+                <label class="category-option">
+                  <input type="checkbox" name="characterType" value="uppercase" checked data-testid="checkbox-uppercase" />
+                  <span class="checkbox-visual" aria-hidden="true"></span>
+                  <span class="category-name">Uppercase</span>
+                  <span class="category-sample">A–Z</span>
+                </label>
+                <label class="category-option">
+                  <input type="checkbox" name="characterType" value="lowercase" checked data-testid="checkbox-lowercase" />
+                  <span class="checkbox-visual" aria-hidden="true"></span>
+                  <span class="category-name">Lowercase</span>
+                  <span class="category-sample">a–z</span>
+                </label>
+                <label class="category-option">
+                  <input type="checkbox" name="characterType" value="numbers" checked data-testid="checkbox-numbers" />
+                  <span class="checkbox-visual" aria-hidden="true"></span>
+                  <span class="category-name">Numbers</span>
+                  <span class="category-sample">0–9</span>
+                </label>
+                <label class="category-option">
+                  <input type="checkbox" name="characterType" value="symbols" checked data-testid="checkbox-symbols" />
+                  <span class="checkbox-visual" aria-hidden="true"></span>
+                  <span class="category-name">Symbols</span>
+                  <span class="category-sample">! @ #</span>
+                </label>
+              </fieldset>
+            </div>
+
+            <div class="generator-actions">
+              <button class="button button-dark" id="generateButton" type="button" data-testid="button-generate">
+                <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
+                  <path d="M10 2.5v3m0 9v3m-7-7h3m8 0h3M5.05 5.05l2.12 2.12m5.66 5.66 2.12 2.12m0-9.9-2.12 2.12m-5.66 5.66-2.12 2.12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
+                  <circle cx="10" cy="10" r="3.2" stroke="currentColor" stroke-width="1.5" />
+                </svg>
+                Generate password
+              </button>
+            </div>
+
+            <div class="generated-output">
+              <label class="field-label" for="generatedPassword">Generated password</label>
+              <div class="output-row">
+                <input
+                  id="generatedPassword"
+                  class="generated-input"
+                  type="text"
+                  readonly
+                  placeholder="Your password will appear here"
+                  aria-describedby="generatorStatus"
+                  data-testid="output-generated-password"
+                />
+                <button class="button button-copy" id="copyButton" type="button" disabled data-testid="button-copy">
+                  Copy
+                </button>
+              </div>
+              <p class="generator-status" id="generatorStatus" role="status" aria-live="polite"></p>
+            </div>
+
+            <p class="generator-note">
+              Generated with the browser’s Web Crypto API. Each selected character type is included.
+            </p>
+          </section>
+        </div>
+      </main>
+
+      <footer class="footer">
+        <span>CipherCheck</span>
+        <span>Local rules. No breach lookup. No password storage.</span>
+      </footer>
+    </div>
+  </body>
+</html>

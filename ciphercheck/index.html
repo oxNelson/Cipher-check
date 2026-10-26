@@ -12,6 +12,20 @@
     <meta name="theme-color" content="#f4f6f3" />
     <title>CipherCheck — Password Security Auditor</title>
     <link rel="stylesheet" href="./style.css" />
+    <script>
+      (function () {
+        try {
+          const stored = localStorage.getItem("ciphercheck-theme");
+          const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+          const theme = stored ? stored : (prefersDark ? "dark" : "light");
+          document.documentElement.setAttribute("data-theme", theme);
+          const metaTheme = document.querySelector('meta[name="theme-color"]');
+          if (metaTheme) {
+            metaTheme.setAttribute("content", theme === "dark" ? "#0f1411" : "#f4f6f3");
+          }
+        } catch (_) {}
+      })();
+    </script>
     <script src="./script.js" defer></script>
   </head>
   <body>
@@ -37,9 +51,46 @@
           <span class="brand-name">cipher<span>check</span></span>
         </a>
 
-        <div class="privacy-pill">
-          <span class="privacy-dot" aria-hidden="true"></span>
-          <span>Analysis stays in this browser</span>
+        <div class="topbar-actions">
+          <div class="privacy-pill">
+            <span class="privacy-dot" aria-hidden="true"></span>
+            <span>Analysis stays in this browser</span>
+          </div>
+
+          <button
+            class="theme-toggle"
+            id="themeToggle"
+            type="button"
+            aria-label="Switch to dark theme"
+            title="Toggle light and dark theme"
+            data-testid="button-theme-toggle"
+          >
+            <span class="theme-icon-wrap" aria-hidden="true">
+              <svg class="sun-icon" viewBox="0 0 24 24" fill="none">
+                <circle cx="12" cy="12" r="4.5" stroke="currentColor" stroke-width="1.8" />
+                <path d="M12 2v2.5M12 19.5V22M4.93 4.93l1.77 1.77M17.3 17.3l1.77 1.77M2 12h2.5M19.5 12H22M6.7 17.3l-1.77 1.77M19.07 4.93l-1.77 1.77" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+              </svg>
+              <svg class="moon-icon" viewBox="0 0 24 24" fill="none">
+                <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79Z" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
+            </span>
+            <span class="theme-label" id="themeLabel">Dark</span>
+          </button>
+
+          <button
+            class="button button-auth-open"
+            id="authOpenButton"
+            type="button"
+            aria-haspopup="dialog"
+            aria-expanded="false"
+            data-testid="button-auth-open"
+          >
+            <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
+              <circle cx="10" cy="7" r="3.2" stroke="currentColor" stroke-width="1.5" />
+              <path d="M4.5 16.5c0-3 2.5-4.5 5.5-4.5s5.5 1.5 5.5 4.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
+            </svg>
+            <span id="authButtonLabel">Account</span>
+          </button>
         </div>
       </header>
 
@@ -270,5 +321,119 @@
         <span>Local rules. No breach lookup. No password storage.</span>
       </footer>
     </div>
+
+    <dialog id="authDialog" class="auth-dialog" aria-labelledby="authModalTitle">
+      <div class="auth-modal-content">
+        <div class="auth-modal-header">
+          <h3 id="authModalTitle">CipherCheck Account</h3>
+          <button id="authModalClose" class="modal-close-btn" type="button" aria-label="Close dialog">
+            <svg viewBox="0 0 20 20" fill="none" width="18" height="18" aria-hidden="true">
+              <path d="M5 5l10 10M15 5L5 15" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+            </svg>
+          </button>
+        </div>
+
+        <div class="smtp-notice" role="note">
+          <svg viewBox="0 0 20 20" fill="none" width="16" height="16" aria-hidden="true">
+            <circle cx="10" cy="10" r="8" stroke="currentColor" stroke-width="1.5" />
+            <path d="M10 6v5m0 3v.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
+          </svg>
+          <span>SMTP is not configured in this environment. Email verification and password recovery delivery are unavailable.</span>
+        </div>
+
+        <!-- Auth Tabs (when not logged in) -->
+        <div id="authGuestView">
+          <div class="auth-tabs" role="tablist" aria-label="Authentication Options">
+            <button id="tabLogin" class="auth-tab active" type="button" role="tab" aria-selected="true" aria-controls="panelLogin">
+              Sign In
+            </button>
+            <button id="tabRegister" class="auth-tab" type="button" role="tab" aria-selected="false" aria-controls="panelRegister">
+              Register
+            </button>
+          </div>
+
+          <!-- Login Form Panel -->
+          <div id="panelLogin" class="auth-panel" role="tabpanel" aria-labelledby="tabLogin">
+            <form id="loginForm" novalidate>
+              <div class="auth-field">
+                <label class="field-label" for="loginEmail">Email address</label>
+                <input id="loginEmail" class="auth-input" type="email" autocomplete="username" required data-testid="input-login-email" />
+              </div>
+              <div class="auth-field">
+                <label class="field-label" for="loginPassword">Password</label>
+                <input id="loginPassword" class="auth-input" type="password" autocomplete="current-password" required data-testid="input-login-password" />
+              </div>
+              <p class="auth-status" id="loginStatus" role="status" aria-live="polite"></p>
+              <button class="button button-primary auth-submit-btn" type="submit" data-testid="button-login-submit">
+                Sign In
+              </button>
+              <button class="button button-text forgot-btn" id="forgotPasswordBtn" type="button">
+                Forgot password?
+              </button>
+            </form>
+          </div>
+
+          <!-- Register Form Panel -->
+          <div id="panelRegister" class="auth-panel" role="tabpanel" aria-labelledby="tabRegister" hidden>
+            <form id="registerForm" novalidate>
+              <div class="auth-field">
+                <label class="field-label" for="registerEmail">Email address</label>
+                <input id="registerEmail" class="auth-input" type="email" autocomplete="email" required data-testid="input-register-email" />
+              </div>
+              <div class="auth-field">
+                <label class="field-label" for="registerPassword">Password (min 8 characters)</label>
+                <input id="registerPassword" class="auth-input" type="password" autocomplete="new-password" minlength="8" required data-testid="input-register-password" />
+              </div>
+              <p class="auth-privacy-reminder">
+                Passwords tested in the analyzer workbench are never transmitted. This credential is used solely to authenticate your CipherCheck account session.
+              </p>
+              <p class="auth-status" id="registerStatus" role="status" aria-live="polite"></p>
+              <button class="button button-primary auth-submit-btn" type="submit" data-testid="button-register-submit">
+                Create Account
+              </button>
+            </form>
+          </div>
+        </div>
+
+        <!-- User Profile Panel (when logged in) -->
+        <div id="authUserView" class="auth-panel" hidden>
+          <div class="profile-info">
+            <div class="profile-avatar" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" width="28" height="28">
+                <circle cx="12" cy="8" r="4" stroke="currentColor" stroke-width="1.6" />
+                <path d="M5 20c0-3.8 3.1-6 7-6s7 2.2 7 6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+              </svg>
+            </div>
+            <div>
+              <p class="profile-email-label">Signed in as</p>
+              <h4 id="profileEmail" class="profile-email">—</h4>
+            </div>
+          </div>
+
+          <dl class="profile-details">
+            <div>
+              <dt>Account ID</dt>
+              <dd id="profileUserId">—</dd>
+            </div>
+            <div>
+              <dt>Created</dt>
+              <dd id="profileCreated">—</dd>
+            </div>
+            <div>
+              <dt>Email Verification</dt>
+              <dd id="profileVerified">Unverified (SMTP offline)</dd>
+            </div>
+          </dl>
+
+          <p class="auth-status" id="profileStatus" role="status" aria-live="polite"></p>
+
+          <div class="profile-actions">
+            <button class="button button-dark" id="logoutButton" type="button" data-testid="button-logout">
+              Sign Out
+            </button>
+          </div>
+        </div>
+      </div>
+    </dialog>
   </body>
 </html>

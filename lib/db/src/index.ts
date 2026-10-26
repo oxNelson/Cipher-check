@@ -4,13 +4,19 @@ import * as schema from "./schema";
 
 const { Pool } = pg;
 
-if (!process.env.DATABASE_URL) {
-  throw new Error(
-    "DATABASE_URL must be set. Did you forget to provision a database?",
-  );
+let pool: pg.Pool | null = null;
+let db: ReturnType<typeof drizzle> | any = null;
+
+if (process.env.DATABASE_URL) {
+  try {
+    pool = new Pool({ connectionString: process.env.DATABASE_URL });
+    db = drizzle(pool, { schema });
+  } catch (err) {
+    console.warn("[Database] Failed to connect to DATABASE_URL, using mock fallback:", err);
+  }
+} else {
+  console.warn("[Database] DATABASE_URL is not set. Database operations will use in-memory store.");
 }
 
-export const pool = new Pool({ connectionString: process.env.DATABASE_URL });
-export const db = drizzle(pool, { schema });
-
+export { pool, db };
 export * from "./schema";

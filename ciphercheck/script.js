@@ -534,7 +534,323 @@ function initGenerator() {
   validateConfiguration();
 }
 
+const THEME_STORAGE_KEY = "ciphercheck-theme";
+
+function applyTheme(theme, isUserAction = false) {
+  const effectiveTheme = theme === "dark" ? "dark" : "light";
+  document.documentElement.setAttribute("data-theme", effectiveTheme);
+
+  const metaTheme = document.querySelector('meta[name="theme-color"]');
+  if (metaTheme) {
+    metaTheme.setAttribute(
+      "content",
+      effectiveTheme === "dark" ? "#0f1411" : "#f4f6f3",
+    );
+  }
+
+  const toggle = document.getElementById("themeToggle");
+  const label = document.getElementById("themeLabel");
+  if (toggle) {
+    const nextThemeLabel = effectiveTheme === "dark" ? "Light" : "Dark";
+    toggle.setAttribute(
+      "aria-label",
+      `Switch to ${nextThemeLabel.toLowerCase()} theme`,
+    );
+    toggle.setAttribute(
+      "title",
+      `Switch to ${nextThemeLabel.toLowerCase()} theme`,
+    );
+    if (label) {
+      label.textContent = nextThemeLabel;
+    }
+  }
+
+  if (isUserAction) {
+    try {
+      localStorage.setItem(THEME_STORAGE_KEY, effectiveTheme);
+    } catch (_) {}
+  }
+}
+
+function getStoredTheme() {
+  try {
+    return localStorage.getItem(THEME_STORAGE_KEY);
+  } catch (_) {
+    return null;
+  }
+}
+
+function getSystemTheme() {
+  return window.matchMedia &&
+    window.matchMedia("(prefers-color-scheme: dark)").matches
+    ? "dark"
+    : "light";
+}
+
+function initThemeToggle() {
+  const toggle = document.getElementById("themeToggle");
+  const stored = getStoredTheme();
+  const currentTheme = stored || getSystemTheme();
+
+  applyTheme(currentTheme, false);
+
+  if (toggle) {
+    toggle.addEventListener("click", () => {
+      const activeTheme =
+        document.documentElement.getAttribute("data-theme") || "light";
+      const newTheme = activeTheme === "dark" ? "light" : "dark";
+      applyTheme(newTheme, true);
+    });
+  }
+
+  if (window.matchMedia) {
+    const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
+    const handler = (e) => {
+      if (!getStoredTheme()) {
+        applyTheme(e.matches ? "dark" : "light", false);
+      }
+    };
+    if (typeof mediaQuery.addEventListener === "function") {
+      mediaQuery.addEventListener("change", handler);
+    } else if (typeof mediaQuery.addListener === "function") {
+      mediaQuery.addListener(handler);
+    }
+  }
+}
+
+function initAuth() {
+  const dialog = document.getElementById("authDialog");
+  const openBtn = document.getElementById("authOpenButton");
+  const closeBtn = document.getElementById("authModalClose");
+  const buttonLabel = document.getElementById("authButtonLabel");
+  const guestView = document.getElementById("authGuestView");
+  const userView = document.getElementById("authUserView");
+  const tabLogin = document.getElementById("tabLogin");
+  const tabRegister = document.getElementById("tabRegister");
+  const panelLogin = document.getElementById("panelLogin");
+  const panelRegister = document.getElementById("panelRegister");
+  const loginForm = document.getElementById("loginForm");
+  const registerForm = document.getElementById("registerForm");
+  const loginStatus = document.getElementById("loginStatus");
+  const registerStatus = document.getElementById("registerStatus");
+  const profileEmail = document.getElementById("profileEmail");
+  const profileUserId = document.getElementById("profileUserId");
+  const profileCreated = document.getElementById("profileCreated");
+  const profileVerified = document.getElementById("profileVerified");
+  const logoutBtn = document.getElementById("logoutButton");
+  const forgotBtn = document.getElementById("forgotPasswordBtn");
+
+  const updateAuthUI = (user) => {
+    if (user) {
+      if (buttonLabel) {
+        buttonLabel.textContent = user.email.split("@")[0];
+      }
+      if (guestView) guestView.hidden = true;
+      if (userView) userView.hidden = false;
+      if (profileEmail) profileEmail.textContent = user.email;
+      if (profileUserId) profileUserId.textContent = `#${user.id}`;
+      if (profileCreated) {
+        profileCreated.textContent = new Date(user.createdAt).toLocaleDateString();
+      }
+      if (profileVerified) {
+        profileVerified.textContent = user.isVerified
+          ? "Verified"
+          : "Unverified (SMTP offline)";
+      }
+    } else {
+      if (buttonLabel) buttonLabel.textContent = "Sign in";
+      if (guestView) guestView.hidden = false;
+      if (userView) userView.hidden = true;
+    }
+  };
+
+  const switchTab = (tab) => {
+    if (tab === "login") {
+      tabLogin.classList.add("active");
+      tabLogin.setAttribute("aria-selected", "true");
+      tabRegister.classList.remove("active");
+      tabRegister.setAttribute("aria-selected", "false");
+      panelLogin.hidden = false;
+      panelRegister.hidden = true;
+    } else {
+      tabRegister.classList.add("active");
+      tabRegister.setAttribute("aria-selected", "true");
+      tabLogin.classList.remove("active");
+      tabLogin.setAttribute("aria-selected", "false");
+      panelRegister.hidden = false;
+      panelLogin.hidden = true;
+    }
+    if (loginStatus) {
+      loginStatus.textContent = "";
+      loginStatus.removeAttribute("data-state");
+    }
+    if (registerStatus) {
+      registerStatus.textContent = "";
+      registerStatus.removeAttribute("data-state");
+    }
+  };
+
+  if (tabLogin) tabLogin.addEventListener("click", () => switchTab("login"));
+  if (tabRegister) tabRegister.addEventListener("click", () => switchTab("register"));
+
+  if (openBtn && dialog) {
+    openBtn.addEventListener("click", () => {
+      if (typeof dialog.showModal === "function") {
+        dialog.showModal();
+      } else {
+        dialog.setAttribute("open", "");
+      }
+      openBtn.setAttribute("aria-expanded", "true");
+    });
+  }
+
+  const closeDialog = () => {
+    if (dialog) {
+      if (typeof dialog.close === "function") {
+        dialog.close();
+      } else {
+        dialog.removeAttribute("open");
+      }
+    }
+    if (openBtn) openBtn.setAttribute("aria-expanded", "false");
+  };
+
+  if (closeBtn) closeBtn.addEventListener("click", closeDialog);
+  if (dialog) {
+    dialog.addEventListener("click", (e) => {
+      const rect = dialog.getBoundingClientRect();
+      const isInDialog =
+        rect.top <= e.clientY &&
+        e.clientY <= rect.top + rect.height &&
+        rect.left <= e.clientX &&
+        e.clientX <= rect.left + rect.width;
+      if (!isInDialog) {
+        closeDialog();
+      }
+    });
+  }
+
+  async function checkSession() {
+    try {
+      const res = await fetch("/api/auth/me");
+      if (res.ok) {
+        const data = await res.json();
+        updateAuthUI(data.user);
+      } else {
+        updateAuthUI(null);
+      }
+    } catch (_) {
+      updateAuthUI(null);
+    }
+  }
+
+  if (loginForm) {
+    loginForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      loginStatus.textContent = "";
+      loginStatus.removeAttribute("data-state");
+
+      const email = document.getElementById("loginEmail").value.trim();
+      const password = document.getElementById("loginPassword").value;
+
+      if (!email || !password) {
+        loginStatus.textContent = "Please fill in all fields.";
+        loginStatus.dataset.state = "error";
+        return;
+      }
+
+      try {
+        const res = await fetch("/api/auth/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email, password }),
+        });
+        const data = await res.json();
+        if (res.ok && data.user) {
+          loginStatus.textContent = "Signed in successfully.";
+          updateAuthUI(data.user);
+          loginForm.reset();
+        } else {
+          loginStatus.textContent = data.error || "Failed to sign in.";
+          loginStatus.dataset.state = "error";
+        }
+      } catch (err) {
+        loginStatus.textContent = "Connection error. Please try again.";
+        loginStatus.dataset.state = "error";
+      }
+    });
+  }
+
+  if (registerForm) {
+    registerForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      registerStatus.textContent = "";
+      registerStatus.removeAttribute("data-state");
+
+      const email = document.getElementById("registerEmail").value.trim();
+      const password = document.getElementById("registerPassword").value;
+
+      if (!email || !password) {
+        registerStatus.textContent = "Please fill in all fields.";
+        registerStatus.dataset.state = "error";
+        return;
+      }
+
+      if (password.length < 8) {
+        registerStatus.textContent = "Password must be at least 8 characters.";
+        registerStatus.dataset.state = "error";
+        return;
+      }
+
+      try {
+        const res = await fetch("/api/auth/register", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email, password }),
+        });
+        const data = await res.json();
+        if (res.ok && data.user) {
+          registerStatus.textContent = "Account created successfully.";
+          updateAuthUI(data.user);
+          registerForm.reset();
+        } else {
+          registerStatus.textContent = data.error || "Registration failed.";
+          registerStatus.dataset.state = "error";
+        }
+      } catch (err) {
+        registerStatus.textContent = "Connection error. Please try again.";
+        registerStatus.dataset.state = "error";
+      }
+    });
+  }
+
+  if (logoutBtn) {
+    logoutBtn.addEventListener("click", async () => {
+      try {
+        await fetch("/api/auth/logout", { method: "POST" });
+        updateAuthUI(null);
+        switchTab("login");
+      } catch (_) {
+        updateAuthUI(null);
+      }
+    });
+  }
+
+  if (forgotBtn) {
+    forgotBtn.addEventListener("click", async () => {
+      loginStatus.textContent =
+        "Notice: SMTP email delivery service is currently not configured. Password recovery is unavailable in this environment.";
+      loginStatus.dataset.state = "error";
+    });
+  }
+
+  checkSession();
+}
+
 document.addEventListener("DOMContentLoaded", () => {
+  initThemeToggle();
   initAnalyzer();
   initGenerator();
+  initAuth();
 });
+

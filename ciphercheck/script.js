@@ -629,42 +629,211 @@ function initAuth() {
   const tabRegister = document.getElementById("tabRegister");
   const panelLogin = document.getElementById("panelLogin");
   const panelRegister = document.getElementById("panelRegister");
+  const panelForgot = document.getElementById("panelForgot");
+  const panelReset = document.getElementById("panelReset");
   const loginForm = document.getElementById("loginForm");
   const registerForm = document.getElementById("registerForm");
+  const forgotForm = document.getElementById("forgotForm");
+  const resetPasswordForm = document.getElementById("resetPasswordForm");
   const loginStatus = document.getElementById("loginStatus");
   const registerStatus = document.getElementById("registerStatus");
+  const forgotStatus = document.getElementById("forgotStatus");
+  const resetStatus = document.getElementById("resetStatus");
   const profileEmail = document.getElementById("profileEmail");
+  const profileDisplayName = document.getElementById("profileDisplayName");
+  const profileEmailSubtitle = document.getElementById("profileEmailSubtitle");
+  const profileNicknameValue = document.getElementById("profileNicknameValue");
+  const profileNicknameDisplay = document.getElementById("profileNicknameDisplay");
+  const profileNicknameCard = document.getElementById("profileNicknameCard");
+  const nicknameViewRow = document.getElementById("nicknameViewRow");
+  const nicknameEditForm = document.getElementById("nicknameEditForm");
+  const editNicknameBtn = document.getElementById("editNicknameBtn");
+  const nicknameInput = document.getElementById("nicknameInput");
+  const saveNicknameBtn = document.getElementById("saveNicknameBtn");
+  const cancelNicknameBtn = document.getElementById("cancelNicknameBtn");
+  const nicknameStatus = document.getElementById("nicknameStatus");
+  const registerNickname = document.getElementById("registerNickname");
   const profileUserId = document.getElementById("profileUserId");
   const profileCreated = document.getElementById("profileCreated");
   const profileVerified = document.getElementById("profileVerified");
+  const profileStatus = document.getElementById("profileStatus");
   const logoutBtn = document.getElementById("logoutButton");
   const forgotBtn = document.getElementById("forgotPasswordBtn");
+  const backToLoginBtn = document.getElementById("backToLoginBtn");
+  const haveResetTokenBtn = document.getElementById("haveResetTokenBtn");
+  const cancelResetBtn = document.getElementById("cancelResetBtn");
+  const resendVerificationBtn = document.getElementById("resendVerificationBtn");
+  const resetTokenField = document.getElementById("resetTokenField");
+  const resetTokenInput = document.getElementById("resetTokenInput");
+  const smtpNotice = document.getElementById("smtpNotice");
+  const smtpNoticeText = document.getElementById("smtpNoticeText");
+  const authTabs = document.querySelector(".auth-tabs");
+
+  let isSmtpAvailable = false;
+  let currentResetToken = null;
+  let currentUser = null;
+
+  function getAuthHeaders(extra = {}) {
+    const token = sessionStorage.getItem("ciphercheck_token");
+    const headers = { "Content-Type": "application/json", ...extra };
+    if (token) {
+      headers["Authorization"] = `Bearer ${token}`;
+    }
+    return headers;
+  }
 
   const updateAuthUI = (user) => {
+    currentUser = user;
     if (user) {
+      const fallbackName = user.email ? user.email.split("@")[0] : "User";
+      const hasNickname = Boolean(user.nickname && typeof user.nickname === "string" && user.nickname.trim());
+      const displayName = hasNickname ? user.nickname.trim() : fallbackName;
+
       if (buttonLabel) {
-        buttonLabel.textContent = user.email.split("@")[0];
+        buttonLabel.textContent = displayName;
       }
       if (guestView) guestView.hidden = true;
       if (userView) userView.hidden = false;
+      if (profileDisplayName) profileDisplayName.textContent = displayName;
+      if (profileEmailSubtitle) profileEmailSubtitle.textContent = user.email;
       if (profileEmail) profileEmail.textContent = user.email;
-      if (profileUserId) profileUserId.textContent = `#${user.id}`;
+
+      if (profileNicknameValue) {
+        if (hasNickname) {
+          profileNicknameValue.textContent = user.nickname.trim();
+          profileNicknameValue.classList.remove("is-fallback");
+        } else {
+          profileNicknameValue.textContent = `${fallbackName} (fallback)`;
+          profileNicknameValue.classList.add("is-fallback");
+        }
+      }
+
+      if (profileNicknameDisplay) {
+        profileNicknameDisplay.textContent = hasNickname ? user.nickname.trim() : "Not set";
+      }
+
+      if (nicknameViewRow) nicknameViewRow.style.display = "flex";
+      if (nicknameEditForm) nicknameEditForm.style.display = "none";
+      if (nicknameStatus) {
+        nicknameStatus.textContent = "";
+        nicknameStatus.removeAttribute("data-state");
+      }
+
+      if (profileUserId) {
+        profileUserId.textContent = user.id ? `#${user.id.slice(0, 8)}...` : "—";
+        profileUserId.title = user.id || "";
+      }
       if (profileCreated) {
         profileCreated.textContent = new Date(user.createdAt).toLocaleDateString();
       }
       if (profileVerified) {
-        profileVerified.textContent = user.isVerified
-          ? "Verified"
-          : "Unverified (SMTP offline)";
+        if (user.isVerified) {
+          profileVerified.textContent = "Verified ✓";
+          profileVerified.style.color = "var(--green)";
+          if (resendVerificationBtn) resendVerificationBtn.style.display = "none";
+        } else {
+          profileVerified.textContent = isSmtpAvailable
+            ? "Pending verification"
+            : "Unverified (SMTP offline)";
+          profileVerified.style.color = "var(--amber)";
+          if (resendVerificationBtn) {
+            resendVerificationBtn.style.display = isSmtpAvailable ? "block" : "none";
+          }
+        }
       }
     } else {
+      currentUser = null;
       if (buttonLabel) buttonLabel.textContent = "Sign in";
       if (guestView) guestView.hidden = false;
       if (userView) userView.hidden = true;
     }
   };
 
+  if (editNicknameBtn) {
+    editNicknameBtn.addEventListener("click", () => {
+      if (nicknameViewRow) nicknameViewRow.style.display = "none";
+      if (nicknameEditForm) nicknameEditForm.style.display = "block";
+      if (nicknameInput) {
+        nicknameInput.value = currentUser?.nickname || "";
+        nicknameInput.focus();
+        nicknameInput.select();
+      }
+      if (nicknameStatus) {
+        nicknameStatus.textContent = "";
+        nicknameStatus.removeAttribute("data-state");
+      }
+    });
+  }
+
+  if (cancelNicknameBtn) {
+    cancelNicknameBtn.addEventListener("click", () => {
+      if (nicknameEditForm) nicknameEditForm.style.display = "none";
+      if (nicknameViewRow) nicknameViewRow.style.display = "flex";
+      if (nicknameStatus) {
+        nicknameStatus.textContent = "";
+        nicknameStatus.removeAttribute("data-state");
+      }
+    });
+  }
+
+  if (nicknameEditForm) {
+    nicknameEditForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      if (!nicknameStatus || !nicknameInput) return;
+      nicknameStatus.textContent = "";
+      nicknameStatus.removeAttribute("data-state");
+
+      const trimmed = nicknameInput.value.trim();
+      if (trimmed.length < 2 || trimmed.length > 30) {
+        nicknameStatus.textContent = "Nickname must be between 2 and 30 characters long.";
+        nicknameStatus.dataset.state = "error";
+        return;
+      }
+
+      if (/[\r\n\t\0]/.test(trimmed) || /<[^>]*>/.test(trimmed)) {
+        nicknameStatus.textContent = "Nickname cannot contain HTML tags or control characters.";
+        nicknameStatus.dataset.state = "error";
+        return;
+      }
+
+      if (saveNicknameBtn) saveNicknameBtn.disabled = true;
+      nicknameStatus.textContent = "Saving nickname...";
+
+      try {
+        const res = await fetch("/api/auth/nickname", {
+          method: "PUT",
+          headers: getAuthHeaders(),
+          credentials: "include",
+          body: JSON.stringify({ nickname: trimmed }),
+        });
+        const data = await res.json();
+        if (res.ok && data.user) {
+          currentUser = data.user;
+          updateAuthUI(data.user);
+          nicknameStatus.textContent = data.message || "Nickname updated successfully!";
+          nicknameStatus.removeAttribute("data-state");
+          setTimeout(() => {
+            if (nicknameEditForm) nicknameEditForm.style.display = "none";
+            if (nicknameViewRow) nicknameViewRow.style.display = "flex";
+          }, 1000);
+        } else {
+          nicknameStatus.textContent = data.error || "Failed to update nickname.";
+          nicknameStatus.dataset.state = "error";
+        }
+      } catch (_) {
+        nicknameStatus.textContent = "Connection error while updating nickname.";
+        nicknameStatus.dataset.state = "error";
+      } finally {
+        if (saveNicknameBtn) saveNicknameBtn.disabled = false;
+      }
+    });
+  }
+
   const switchTab = (tab) => {
+    if (panelForgot) panelForgot.hidden = true;
+    if (panelReset) panelReset.hidden = true;
+    if (resetTokenField) resetTokenField.style.display = "none";
+    if (authTabs) authTabs.hidden = false;
     if (tab === "login") {
       tabLogin.classList.add("active");
       tabLogin.setAttribute("aria-selected", "true");
@@ -730,13 +899,38 @@ function initAuth() {
     });
   }
 
+  async function fetchStatus() {
+    try {
+      const res = await fetch("/api/auth/status");
+      if (res.ok) {
+        const data = await res.json();
+        isSmtpAvailable = !!data.smtpConfigured;
+        if (smtpNotice && smtpNoticeText) {
+          if (data.smtpConfigured) {
+            smtpNotice.classList.add("configured");
+            smtpNoticeText.textContent =
+              "✓ SMTP email service is active. Email verification and password recovery are enabled.";
+          } else {
+            smtpNotice.classList.remove("configured");
+            smtpNoticeText.textContent =
+              "SMTP is not configured in this environment. Email verification and password recovery delivery are unavailable.";
+          }
+        }
+      }
+    } catch (_) {}
+  }
+
   async function checkSession() {
     try {
-      const res = await fetch("/api/auth/me");
+      const res = await fetch("/api/auth/me", {
+        headers: getAuthHeaders(),
+        credentials: "include",
+      });
       if (res.ok) {
         const data = await res.json();
         updateAuthUI(data.user);
       } else {
+        sessionStorage.removeItem("ciphercheck_token");
         updateAuthUI(null);
       }
     } catch (_) {
@@ -763,10 +957,14 @@ function initAuth() {
         const res = await fetch("/api/auth/login", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
+          credentials: "include",
           body: JSON.stringify({ email, password }),
         });
         const data = await res.json();
         if (res.ok && data.user) {
+          if (data.token) {
+            sessionStorage.setItem("ciphercheck_token", data.token);
+          }
           loginStatus.textContent = "Signed in successfully.";
           updateAuthUI(data.user);
           loginForm.reset();
@@ -789,9 +987,16 @@ function initAuth() {
 
       const email = document.getElementById("registerEmail").value.trim();
       const password = document.getElementById("registerPassword").value;
+      const nickname = registerNickname ? registerNickname.value.trim() : "";
 
       if (!email || !password) {
-        registerStatus.textContent = "Please fill in all fields.";
+        registerStatus.textContent = "Please fill in all required fields.";
+        registerStatus.dataset.state = "error";
+        return;
+      }
+
+      if (nickname && (nickname.length < 2 || nickname.length > 30)) {
+        registerStatus.textContent = "Nickname must be between 2 and 30 characters.";
         registerStatus.dataset.state = "error";
         return;
       }
@@ -806,11 +1011,15 @@ function initAuth() {
         const res = await fetch("/api/auth/register", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ email, password }),
+          credentials: "include",
+          body: JSON.stringify({ email, password, nickname: nickname || undefined }),
         });
         const data = await res.json();
         if (res.ok && data.user) {
-          registerStatus.textContent = "Account created successfully.";
+          if (data.token) {
+            sessionStorage.setItem("ciphercheck_token", data.token);
+          }
+          registerStatus.textContent = data.message || "Account created successfully.";
           updateAuthUI(data.user);
           registerForm.reset();
         } else {
@@ -824,26 +1033,259 @@ function initAuth() {
     });
   }
 
-  if (logoutBtn) {
-    logoutBtn.addEventListener("click", async () => {
-      try {
-        await fetch("/api/auth/logout", { method: "POST" });
-        updateAuthUI(null);
-        switchTab("login");
-      } catch (_) {
-        updateAuthUI(null);
+  if (forgotBtn) {
+    forgotBtn.addEventListener("click", () => {
+      if (panelLogin) panelLogin.hidden = true;
+      if (panelForgot) panelForgot.hidden = false;
+      if (forgotStatus) {
+        forgotStatus.textContent = "";
+        forgotStatus.removeAttribute("data-state");
       }
     });
   }
 
-  if (forgotBtn) {
-    forgotBtn.addEventListener("click", async () => {
-      loginStatus.textContent =
-        "Notice: SMTP email delivery service is currently not configured. Password recovery is unavailable in this environment.";
-      loginStatus.dataset.state = "error";
+  if (backToLoginBtn) {
+    backToLoginBtn.addEventListener("click", () => {
+      if (panelForgot) panelForgot.hidden = true;
+      if (panelLogin) panelLogin.hidden = false;
     });
   }
 
+  if (haveResetTokenBtn) {
+    haveResetTokenBtn.addEventListener("click", () => {
+      if (panelForgot) panelForgot.hidden = true;
+      if (panelReset) panelReset.hidden = false;
+      if (authTabs) authTabs.hidden = true;
+      if (resetTokenField) resetTokenField.style.display = "block";
+      if (resetTokenInput) resetTokenInput.focus();
+      if (resetStatus) {
+        resetStatus.textContent = "Please enter your reset token and new password.";
+        resetStatus.removeAttribute("data-state");
+      }
+    });
+  }
+
+  if (forgotForm) {
+    forgotForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      forgotStatus.textContent = "";
+      forgotStatus.removeAttribute("data-state");
+
+      const email = document.getElementById("forgotEmail").value.trim();
+      if (!email) {
+        forgotStatus.textContent = "Please enter your email address.";
+        forgotStatus.dataset.state = "error";
+        return;
+      }
+
+      try {
+        const res = await fetch("/api/auth/forgot-password", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email }),
+        });
+        const data = await res.json();
+        if (res.ok) {
+          forgotStatus.textContent =
+            data.message || "If the account exists, a reset link has been dispatched.";
+          forgotForm.reset();
+        } else {
+          forgotStatus.textContent = data.error || "Unable to send password reset.";
+          forgotStatus.dataset.state = "error";
+        }
+      } catch (_) {
+        forgotStatus.textContent = "Connection error. Please try again.";
+        forgotStatus.dataset.state = "error";
+      }
+    });
+  }
+
+  if (resendVerificationBtn) {
+    resendVerificationBtn.addEventListener("click", async () => {
+      if (profileStatus) {
+        profileStatus.textContent = "Sending verification email...";
+        profileStatus.removeAttribute("data-state");
+      }
+      try {
+        const res = await fetch("/api/auth/resend-verification", {
+          method: "POST",
+          headers: getAuthHeaders(),
+          credentials: "include",
+        });
+        const data = await res.json();
+        if (profileStatus) {
+          if (res.ok) {
+            profileStatus.textContent = data.message || "Verification email sent.";
+          } else {
+            profileStatus.textContent = data.error || "Failed to resend verification.";
+            profileStatus.dataset.state = "error";
+          }
+        }
+      } catch (_) {
+        if (profileStatus) {
+          profileStatus.textContent = "Connection error. Please try again.";
+          profileStatus.dataset.state = "error";
+        }
+      }
+    });
+  }
+
+  if (logoutBtn) {
+    logoutBtn.addEventListener("click", async () => {
+      try {
+        await fetch("/api/auth/logout", {
+          method: "POST",
+          headers: getAuthHeaders(),
+          credentials: "include",
+        });
+      } catch (_) {}
+      sessionStorage.removeItem("ciphercheck_token");
+      updateAuthUI(null);
+      switchTab("login");
+    });
+  }
+
+  if (cancelResetBtn) {
+    cancelResetBtn.addEventListener("click", () => {
+      if (panelReset) panelReset.hidden = true;
+      if (authTabs) authTabs.hidden = false;
+      if (resetTokenField) resetTokenField.style.display = "none";
+      if (resetTokenInput) resetTokenInput.value = "";
+      currentResetToken = null;
+      switchTab("login");
+    });
+  }
+
+  if (resetPasswordForm) {
+    resetPasswordForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      resetStatus.textContent = "";
+      resetStatus.removeAttribute("data-state");
+
+      const rawToken = (currentResetToken || (resetTokenInput ? resetTokenInput.value : "")).trim();
+      const token = rawToken.replace(/^.*[?&]resetToken=/, "").trim();
+      const newPassword = document.getElementById("resetNewPassword").value;
+      const confirmPassword = document.getElementById("resetConfirmPassword").value;
+
+      if (!token) {
+        resetStatus.textContent = "Password reset token is missing. Please enter the token from your email.";
+        resetStatus.dataset.state = "error";
+        return;
+      }
+
+      if (!newPassword || !confirmPassword) {
+        resetStatus.textContent = "Please fill in all fields.";
+        resetStatus.dataset.state = "error";
+        return;
+      }
+
+      if (newPassword.length < 8) {
+        resetStatus.textContent = "Password must be at least 8 characters long.";
+        resetStatus.dataset.state = "error";
+        return;
+      }
+
+      if (newPassword !== confirmPassword) {
+        resetStatus.textContent = "Passwords do not match.";
+        resetStatus.dataset.state = "error";
+        return;
+      }
+
+      try {
+        const res = await fetch("/api/auth/reset-password", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ token, newPassword }),
+        });
+        const data = await res.json();
+        if (res.ok && data.success) {
+          resetStatus.textContent = "Password updated successfully! You can now sign in.";
+          resetStatus.removeAttribute("data-state");
+          resetPasswordForm.reset();
+          currentResetToken = null;
+          if (resetTokenInput) resetTokenInput.value = "";
+          setTimeout(() => {
+            if (panelReset) panelReset.hidden = true;
+            if (authTabs) authTabs.hidden = false;
+            switchTab("login");
+            if (loginStatus) {
+              loginStatus.textContent = "Password reset complete. Please sign in with your new password.";
+              loginStatus.removeAttribute("data-state");
+            }
+          }, 1500);
+        } else {
+          resetStatus.textContent = data.error || "Password reset failed. Link may be invalid or expired.";
+          resetStatus.dataset.state = "error";
+        }
+      } catch (_) {
+        resetStatus.textContent = "Connection error. Please try again.";
+        resetStatus.dataset.state = "error";
+      }
+    });
+  }
+
+  // Handle email verification links
+  const urlParams = new URLSearchParams(window.location.search);
+  const verifyToken = urlParams.get("verifyToken") || urlParams.get("token");
+  if (verifyToken) {
+    window.history.replaceState({}, document.title, window.location.pathname);
+    fetch("/api/auth/verify-email", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token: verifyToken }),
+    })
+      .then((r) => r.json())
+      .then((data) => {
+        if (dialog && typeof dialog.showModal === "function") dialog.showModal();
+        if (data.user) {
+          if (data.token) {
+            sessionStorage.setItem("ciphercheck_token", data.token);
+          }
+          updateAuthUI(data.user);
+          if (profileStatus) {
+            profileStatus.textContent = "✓ Email address verified successfully!";
+            profileStatus.removeAttribute("data-state");
+          }
+        } else {
+          switchTab("login");
+          if (loginStatus) {
+            loginStatus.textContent = data.error || "Verification link is invalid or has expired.";
+            loginStatus.dataset.state = "error";
+          }
+        }
+      })
+      .catch(() => {
+        if (dialog && typeof dialog.showModal === "function") dialog.showModal();
+        switchTab("login");
+        if (loginStatus) {
+          loginStatus.textContent = "Connection error during email verification.";
+          loginStatus.dataset.state = "error";
+        }
+      });
+  }
+
+  // Handle password reset links
+  const resetToken = urlParams.get("resetToken");
+  if (resetToken) {
+    currentResetToken = resetToken;
+    if (resetTokenInput) resetTokenInput.value = resetToken;
+    if (resetTokenField) resetTokenField.style.display = "none";
+    window.history.replaceState({}, document.title, window.location.pathname);
+    if (dialog && typeof dialog.showModal === "function") dialog.showModal();
+    if (guestView) guestView.hidden = false;
+    if (userView) userView.hidden = true;
+    if (panelLogin) panelLogin.hidden = true;
+    if (panelRegister) panelRegister.hidden = true;
+    if (panelForgot) panelForgot.hidden = true;
+    if (panelReset) panelReset.hidden = false;
+    if (authTabs) authTabs.hidden = true;
+    if (resetStatus) {
+      resetStatus.textContent = "Enter your new password below.";
+      resetStatus.removeAttribute("data-state");
+    }
+  }
+
+  fetchStatus();
   checkSession();
 }
 

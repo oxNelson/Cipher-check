@@ -55,10 +55,25 @@ The application runs at `http://localhost:3000`.
 | Variable | Description | Default |
 |---|---|---|
 | `PORT` | HTTP port for server | `3000` |
-| `DATABASE_URL` | PostgreSQL connection string (Neon or Cloud SQL) | *(Uses in-memory store if unset)* |
+| `NODE_ENV` | Environment mode (`production` enforces `Secure` cookies) | `development` |
 | `SMTP_HOST` | SMTP server host for email verification | *(Unset / blocked)* |
+| `SMTP_PORT` | SMTP port (e.g., 587) | `587` |
 | `SMTP_USER` | SMTP username | *(Unset / blocked)* |
 | `SMTP_PASS` | SMTP password | *(Unset / blocked)* |
+
+## Production Deployment Checklist
+
+1. **Environment Variables**:
+   - Set `NODE_ENV=production` to ensure session cookies are marked with the `Secure` flag.
+   - Set `DATABASE_URL` pointing to your managed PostgreSQL instance (e.g. Neon or Cloud SQL) with `sslmode=require` or `sslmode=verify-full`.
+2. **Database Migrations**:
+   - Migrations in `lib/db/migrations/0000_initial_users_and_sessions.sql` execute automatically upon server startup when a live PostgreSQL connection is established.
+3. **HTTPS / Reverse Proxy**:
+   - Deploy behind an SSL-terminating reverse proxy or platform (Cloud Run, Netlify, Render).
+   - Ensure the proxy passes `X-Forwarded-Proto: https` so the application recognizes secure connections.
+4. **CSRF Protection**:
+   - State-changing authentication requests require standard JSON payloads, enforce `Sec-Fetch-Site` restrictions, and validate origin alignment.
+
 
 ## Testing
 

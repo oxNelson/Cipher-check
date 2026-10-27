@@ -1164,6 +1164,19 @@ h1 span {
   font-size: 11px;
   line-height: 1.5;
   margin-bottom: 16px;
+  transition: all 180ms ease;
+}
+
+.smtp-notice.configured {
+  border-color: var(--mint);
+  background: var(--green-soft);
+  color: var(--green-dark);
+}
+
+[data-theme="dark"] .smtp-notice.configured {
+  border-color: var(--green-dark);
+  background: var(--green-soft);
+  color: var(--green);
 }
 
 .smtp-notice svg {
@@ -1319,6 +1332,117 @@ h1 span {
   font-size: 11px;
   font-weight: 650;
   color: var(--ink);
+}
+
+.profile-display-name {
+  margin: 2px 0 0;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--ink);
+  word-break: break-all;
+}
+
+.profile-email-subtitle {
+  margin: 2px 0 0;
+  font-size: 11px;
+  color: var(--ink-faint);
+  word-break: break-all;
+}
+
+.profile-nickname-card {
+  padding: 12px;
+  border-radius: 8px;
+  background: var(--field-bg);
+  border: 1px solid var(--line);
+  margin-bottom: 14px;
+}
+
+.nickname-view-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.nickname-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.nickname-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ink-faint);
+  font-weight: 600;
+}
+
+.nickname-val {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--ink);
+  word-break: break-all;
+}
+
+.nickname-val.is-fallback {
+  font-weight: 500;
+  color: var(--ink-faint);
+  font-style: italic;
+}
+
+.button-sm {
+  min-height: 32px;
+  padding: 0 12px;
+  font-size: 11px;
+  border-radius: 6px;
+  gap: 6px;
+}
+
+.button-secondary {
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  color: var(--ink);
+}
+
+.button-secondary:hover {
+  background: var(--field-hover-border);
+}
+
+.button-outline {
+  background: transparent;
+  border: 1px solid var(--line-strong);
+  color: var(--ink);
+}
+
+.button-outline:hover {
+  background: var(--field-bg);
+}
+
+.nickname-edit-form {
+  margin-top: 4px;
+}
+
+.nickname-input-group {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-top: 6px;
+  flex-wrap: wrap;
+}
+
+.nickname-input {
+  height: 36px;
+  font-size: 12px;
+  flex: 1 1 180px;
+  min-width: 0;
+}
+
+.nickname-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
 }
 
 @keyframes reveal {

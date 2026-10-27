@@ -1,3 +1,7 @@
+try {
+  process.loadEnvFile();
+} catch (_) {}
+
 import crypto from "crypto";
 import fs from "fs";
 import path from "path";
@@ -29,40 +33,58 @@ export function resetRateLimit(ip) {
   loginAttempts.delete(ip);
 }
 
-// Secure Password Hashing using crypto.scrypt
+// Secure Password Hashing: uses bcryptjs (matching existing database accounts) or scrypt
 export async function hashPassword(password) {
-  return new Promise((resolve, reject) => {
-    const salt = crypto.randomBytes(16).toString("hex");
-    crypto.scrypt(password, salt, 64, (err, derivedKey) => {
-      if (err) return reject(err);
-      resolve(`scrypt:${salt}:${derivedKey.toString("hex")}`);
+  try {
+    const { default: bcrypt } = await import("bcryptjs");
+    return await bcrypt.hash(password, 12);
+  } catch (_) {
+    return new Promise((resolve, reject) => {
+      const salt = crypto.randomBytes(16).toString("hex");
+      crypto.scrypt(password, salt, 64, (err, derivedKey) => {
+        if (err) return reject(err);
+        resolve(`scrypt:${salt}:${derivedKey.toString("hex")}`);
+      });
     });
-  });
+  }
 }
 
 export async function verifyPassword(password, storedHash) {
-  return new Promise((resolve) => {
-    if (!storedHash || !storedHash.startsWith("scrypt:")) {
-      return resolve(false);
+  if (!storedHash) return false;
+
+  // Support bcrypt hashes ($2a$, $2b$, $2y$)
+  if (storedHash.startsWith("$2")) {
+    try {
+      const { default: bcrypt } = await import("bcryptjs");
+      return await bcrypt.compare(password, storedHash);
+    } catch (_) {
+      return false;
     }
-    const [, salt, originalKeyHex] = storedHash.split(":");
-    if (!salt || !originalKeyHex) {
-      return resolve(false);
-    }
-    crypto.scrypt(password, salt, 64, (err, derivedKey) => {
-      if (err) return resolve(false);
-      const originalKey = Buffer.from(originalKeyHex, "hex");
-      if (originalKey.length !== derivedKey.length) return resolve(false);
-      resolve(crypto.timingSafeEqual(originalKey, derivedKey));
+  }
+
+  // Support scrypt hashes
+  if (storedHash.startsWith("scrypt:")) {
+    return new Promise((resolve) => {
+      const [, salt, originalKeyHex] = storedHash.split(":");
+      if (!salt || !originalKeyHex) {
+        return resolve(false);
+      }
+      crypto.scrypt(password, salt, 64, (err, derivedKey) => {
+        if (err) return resolve(false);
+        const originalKey = Buffer.from(originalKeyHex, "hex");
+        if (originalKey.length !== derivedKey.length) return resolve(false);
+        resolve(crypto.timingSafeEqual(originalKey, derivedKey));
+      });
     });
-  });
+  }
+
+  return false;
 }
 
 // In-Memory Data Store (used when DATABASE_URL is not set or unavailable)
 const memoryUsers = new Map(); // id -> user
 const memoryUsersByEmail = new Map(); // lowercase email -> user
 const memorySessions = new Map(); // sessionId -> { userId, expiresAt }
-let memoryUserIdCounter = 1;
 
 let pgPool = null;
 let isPostgresReady = false;
@@ -74,19 +96,27 @@ export async function initDatabase() {
   }
 
   try {
-    const { default: pg } = await import("pg");
-    const { Pool } = pg;
-    pgPool = new Pool({ connectionString: process.env.DATABASE_URL });
+    const pgModule = await import("pg");
+    const Pool = pgModule.default?.Pool || pgModule.Pool;
+    pgPool = new Pool({
+      connectionString: process.env.DATABASE_URL,
+      connectionTimeoutMillis: 5000,
+    });
 
     // Test connection
     const client = await pgPool.connect();
     try {
-      // Run initial migrations if tables do not exist
-      const migrationPath = path.join(__dirname, "lib", "db", "migrations", "0000_initial_users_and_sessions.sql");
-      if (fs.existsSync(migrationPath)) {
-        const sql = fs.readFileSync(migrationPath, "utf-8");
-        await client.query(sql);
+      // Run migrations in lib/db/migrations
+      const migrationsDir = path.join(__dirname, "lib", "db", "migrations");
+      if (fs.existsSync(migrationsDir)) {
+        const files = fs.readdirSync(migrationsDir).filter(f => f.endsWith(".sql")).sort();
+        for (const file of files) {
+          const sql = fs.readFileSync(path.join(migrationsDir, file), "utf-8");
+          await client.query(sql);
+        }
       }
+      // Ensure nickname column exists
+      await client.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS nickname VARCHAR(30);");
       isPostgresReady = true;
       console.log("[CipherCheck Auth] Connected to PostgreSQL database and verified schema.");
       return { type: "postgres", ready: true };
@@ -106,7 +136,7 @@ export async function findUserByEmail(email) {
   const normalizedEmail = email.trim().toLowerCase();
   if (isPostgresReady && pgPool) {
     const res = await pgPool.query(
-      "SELECT id, email, password_hash as \"passwordHash\", is_verified as \"isVerified\", created_at as \"createdAt\" FROM users WHERE email = $1 LIMIT 1",
+      "SELECT id, email, nickname, password_hash as \"passwordHash\", is_verified as \"isVerified\", created_at as \"createdAt\" FROM users WHERE LOWER(email) = $1 LIMIT 1",
       [normalizedEmail]
     );
     return res.rows[0] || null;
@@ -117,42 +147,160 @@ export async function findUserByEmail(email) {
 export async function findUserById(id) {
   if (isPostgresReady && pgPool) {
     const res = await pgPool.query(
-      "SELECT id, email, is_verified as \"isVerified\", created_at as \"createdAt\" FROM users WHERE id = $1 LIMIT 1",
-      [id]
+      "SELECT id, email, nickname, is_verified as \"isVerified\", created_at as \"createdAt\" FROM users WHERE id = $1 LIMIT 1",
+      [String(id)]
     );
     return res.rows[0] || null;
   }
-  const user = memoryUsers.get(Number(id));
+  const user = memoryUsers.get(String(id));
   if (!user) return null;
   const { passwordHash, ...safeUser } = user;
   return safeUser;
 }
 
-export async function createUser(email, passwordHash) {
+export async function createUser(email, passwordHash, nickname = null) {
   const normalizedEmail = email.trim().toLowerCase();
   const now = new Date();
+  const id = crypto.randomUUID();
+  const cleanNickname =
+    typeof nickname === "string" && nickname.trim().length >= 2 && nickname.trim().length <= 30
+      ? nickname.trim()
+      : null;
 
   if (isPostgresReady && pgPool) {
     const res = await pgPool.query(
-      "INSERT INTO users (email, password_hash, is_verified, created_at, updated_at) VALUES ($1, $2, $3, $4, $4) RETURNING id, email, is_verified as \"isVerified\", created_at as \"createdAt\"",
-      [normalizedEmail, passwordHash, false, now]
+      "INSERT INTO users (id, email, password_hash, nickname, is_verified, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $6) RETURNING id, email, nickname, is_verified as \"isVerified\", created_at as \"createdAt\"",
+      [id, normalizedEmail, passwordHash, cleanNickname, false, now]
     );
     return res.rows[0];
   }
 
   const user = {
-    id: memoryUserIdCounter++,
+    id,
     email: normalizedEmail,
     passwordHash,
+    nickname: cleanNickname,
     isVerified: false,
     createdAt: now.toISOString(),
     updatedAt: now.toISOString(),
   };
 
-  memoryUsers.set(user.id, user);
+  memoryUsers.set(id, user);
   memoryUsersByEmail.set(normalizedEmail, user);
   const { passwordHash: _, ...safeUser } = user;
   return safeUser;
+}
+
+export async function updateUserNickname(userId, nickname) {
+  if (!userId) return null;
+  const cleanNickname = typeof nickname === "string" ? nickname.trim() : "";
+  if (cleanNickname.length < 2 || cleanNickname.length > 30) {
+    throw new Error("Nickname must be between 2 and 30 characters long.");
+  }
+  if (/[\r\n\t\0]/.test(cleanNickname) || /<[^>]*>/.test(cleanNickname)) {
+    throw new Error("Nickname cannot contain HTML tags or control characters.");
+  }
+
+  if (isPostgresReady && pgPool) {
+    const res = await pgPool.query(
+      "UPDATE users SET nickname = $1, updated_at = NOW() WHERE id = $2 RETURNING id, email, nickname, is_verified as \"isVerified\", created_at as \"createdAt\"",
+      [cleanNickname, String(userId)]
+    );
+    return res.rows[0] || null;
+  }
+
+  const user = memoryUsers.get(String(userId));
+  if (!user) return null;
+  user.nickname = cleanNickname;
+  user.updatedAt = new Date().toISOString();
+  const { passwordHash: _, ...safeUser } = user;
+  return safeUser;
+}
+
+export async function setVerificationToken(userId, token, expiresAt) {
+  if (isPostgresReady && pgPool) {
+    await pgPool.query(
+      "UPDATE users SET email_verification_token = $1, email_verification_expires = $2 WHERE id = $3",
+      [token, expiresAt, String(userId)]
+    );
+  } else {
+    const user = memoryUsers.get(String(userId));
+    if (user) {
+      user.emailVerificationToken = token;
+      user.emailVerificationExpires = expiresAt;
+    }
+  }
+}
+
+export async function verifyEmailToken(token) {
+  if (!token) return null;
+  if (isPostgresReady && pgPool) {
+    const res = await pgPool.query(
+      "UPDATE users SET is_verified = true, email_verification_token = NULL, email_verification_expires = NULL WHERE email_verification_token = $1 AND email_verification_expires > NOW() RETURNING id, email, nickname, is_verified as \"isVerified\", created_at as \"createdAt\"",
+      [token]
+    );
+    return res.rows[0] || null;
+  }
+  for (const user of memoryUsers.values()) {
+    if (user.emailVerificationToken === token && new Date(user.emailVerificationExpires) > new Date()) {
+      user.isVerified = true;
+      user.emailVerificationToken = null;
+      user.emailVerificationExpires = null;
+      const { passwordHash: _, ...safeUser } = user;
+      return safeUser;
+    }
+  }
+  return null;
+}
+
+export async function setPasswordResetToken(identifier, token, expiresAt) {
+  if (!identifier) return false;
+  const str = String(identifier).trim();
+  const isEmail = str.includes("@");
+  if (isPostgresReady && pgPool) {
+    const query = isEmail
+      ? "UPDATE users SET password_reset_token = $1, password_reset_expires = $2 WHERE LOWER(email) = LOWER($3) RETURNING id"
+      : "UPDATE users SET password_reset_token = $1, password_reset_expires = $2 WHERE id = $3 RETURNING id";
+    const res = await pgPool.query(query, [token, expiresAt, str]);
+    return Boolean(res.rows.length);
+  }
+  const user = isEmail
+    ? memoryUsersByEmail.get(str.toLowerCase())
+    : memoryUsers.get(str);
+  if (user) {
+    user.passwordResetToken = token;
+    user.passwordResetExpires = expiresAt;
+    return true;
+  }
+  return false;
+}
+
+export async function resetPasswordWithToken(token, newPasswordHash) {
+  if (!token) return null;
+  if (isPostgresReady && pgPool) {
+    const res = await pgPool.query(
+      "UPDATE users SET password_hash = $1, password_reset_token = NULL, password_reset_expires = NULL, updated_at = NOW() WHERE password_reset_token = $2 AND password_reset_expires > NOW() RETURNING id, email",
+      [newPasswordHash, token]
+    );
+    if (!res.rows.length) return null;
+    const user = res.rows[0];
+    await pgPool.query("DELETE FROM sessions WHERE user_id = $1", [user.id]);
+    return user;
+  }
+  for (const user of memoryUsers.values()) {
+    if (user.passwordResetToken === token && new Date(user.passwordResetExpires) > new Date()) {
+      user.passwordHash = newPasswordHash;
+      user.passwordResetToken = null;
+      user.passwordResetExpires = null;
+      for (const [sId, s] of memorySessions.entries()) {
+        if (s.userId === user.id) {
+          memorySessions.delete(sId);
+        }
+      }
+      return { id: user.id, email: user.email };
+    }
+  }
+  return null;
 }
 
 export async function createSession(userId) {
@@ -161,11 +309,11 @@ export async function createSession(userId) {
 
   if (isPostgresReady && pgPool) {
     await pgPool.query(
-      "INSERT INTO sessions (id, user_id, created_at, expires_at) VALUES ($1, $2, NOW(), $3)",
-      [sessionId, userId, expiresAt]
+      "INSERT INTO sessions (id, user_id, created_at, last_active_at, expires_at) VALUES ($1, $2, NOW(), NOW(), $3)",
+      [sessionId, String(userId), expiresAt]
     );
   } else {
-    memorySessions.set(sessionId, { userId, expiresAt });
+    memorySessions.set(sessionId, { userId: String(userId), expiresAt });
   }
 
   return { sessionId, expiresAt };
@@ -176,14 +324,20 @@ export async function findSession(sessionId) {
 
   if (isPostgresReady && pgPool) {
     const res = await pgPool.query(
-      "SELECT s.id, s.user_id as \"userId\", s.expires_at as \"expiresAt\", u.email, u.is_verified as \"isVerified\", u.created_at as \"createdAt\" FROM sessions s JOIN users u ON s.user_id = u.id WHERE s.id = $1 AND s.expires_at > NOW() LIMIT 1",
+      "SELECT s.id, s.user_id as \"userId\", s.expires_at as \"expiresAt\", u.email, u.nickname, u.is_verified as \"isVerified\", u.created_at as \"createdAt\" FROM sessions s JOIN users u ON s.user_id = u.id WHERE s.id = $1 AND s.expires_at > NOW() LIMIT 1",
       [sessionId]
     );
     if (res.rows.length === 0) return null;
     const row = res.rows[0];
     return {
       session: { id: row.id, userId: row.userId, expiresAt: row.expiresAt },
-      user: { id: row.userId, email: row.email, isVerified: row.isVerified, createdAt: row.createdAt },
+      user: {
+        id: row.userId,
+        email: row.email,
+        nickname: row.nickname || null,
+        isVerified: row.isVerified,
+        createdAt: row.createdAt,
+      },
     };
   }
 
@@ -222,11 +376,14 @@ export function parseCookies(cookieHeader) {
   return cookies;
 }
 
-export function serializeSessionCookie(sessionId, expiresAt) {
+export function serializeSessionCookie(sessionId, expiresAt, isSecure = false) {
   const maxAge = Math.floor((expiresAt.getTime() - Date.now()) / 1000);
-  return `session_id=${sessionId}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}`;
+  const secureFlag = isSecure || process.env.NODE_ENV === "production" ? "; Secure" : "";
+  return `session_id=${sessionId}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${secureFlag}`;
 }
 
-export function serializeClearedCookie() {
-  return "session_id=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0";
+export function serializeClearedCookie(isSecure = false) {
+  const secureFlag = isSecure || process.env.NODE_ENV === "production" ? "; Secure" : "";
+  return `session_id=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${secureFlag}`;
 }
+

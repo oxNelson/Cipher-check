@@ -26,6 +26,12 @@ import {
   verifyEmailToken,
   setPasswordResetToken,
   resetPasswordWithToken,
+  saveReport,
+  getSavedReports,
+  getSavedReportById,
+  deleteSavedReport,
+  clearAllSavedReports,
+  redactSensitiveUrl,
 } from "./server-auth.js";
 import {
   isSmtpConfigured,
@@ -98,8 +104,8 @@ async function startServer() {
     const checkIsSecure = (req) =>
       Boolean(req.secure || req.headers["x-forwarded-proto"] === "https" || process.env.NODE_ENV === "production");
 
-    // CSRF defense on state-changing authentication routes
-    app.use("/api/auth", (req, res, next) => {
+    // CSRF defense on state-changing authentication and reports routes
+    app.use(["/api/auth", "/api/reports"], (req, res, next) => {
       if (["GET", "HEAD", "OPTIONS"].includes(req.method)) {
         return next();
       }
@@ -431,6 +437,152 @@ async function startServer() {
       } catch (err) {
         console.error("[Auth] Reset password error:", err);
         return res.status(500).json({ error: "Failed to reset password." });
+      }
+    });
+
+    // =========================================================================
+    // Security Dashboard & Saved Scan Reports Endpoints
+    // =========================================================================
+
+    // Reports: Save a new analysis report (authenticated user only)
+    app.post("/api/reports", async (req, res) => {
+      const sessionId = getSessionId(req);
+      if (!sessionId) {
+        return res.status(401).json({ error: "Please sign in to save security scan reports." });
+      }
+
+      const sessionData = await findSession(sessionId);
+      if (!sessionData) {
+        return res.status(401).json({ error: "Your session has expired. Please sign in again." });
+      }
+
+      const { analysis } = req.body || {};
+      if (!analysis || typeof analysis !== "object" || !analysis.isValid || !analysis.urlParts) {
+        return res.status(400).json({ error: "A valid URL analysis object is required to save a report." });
+      }
+
+      try {
+        const saved = await saveReport(sessionData.user.id, analysis);
+        return res.status(201).json({
+          success: true,
+          message: "Security analysis report saved to your private dashboard.",
+          report: saved,
+        });
+      } catch (err) {
+        console.error("[Reports] Save report error:", err);
+        return res.status(500).json({ error: err.message || "Failed to save security report." });
+      }
+    });
+
+    // Reports: Get user's saved reports list, pagination, and dashboard stats
+    app.get("/api/reports", async (req, res) => {
+      const sessionId = getSessionId(req);
+      if (!sessionId) {
+        return res.status(401).json({ error: "Please sign in to access your security scan history." });
+      }
+
+      const sessionData = await findSession(sessionId);
+      if (!sessionData) {
+        return res.status(401).json({ error: "Your session has expired. Please sign in again." });
+      }
+
+      try {
+        const { limit, offset, risk, search } = req.query;
+        const result = await getSavedReports(sessionData.user.id, {
+          limit,
+          offset,
+          riskLevel: risk,
+          search,
+        });
+
+        return res.json({
+          success: true,
+          ...result,
+        });
+      } catch (err) {
+        console.error("[Reports] List reports error:", err);
+        return res.status(500).json({ error: "Failed to retrieve security reports." });
+      }
+    });
+
+    // Reports: Get single report details by ID
+    app.get("/api/reports/:id", async (req, res) => {
+      const sessionId = getSessionId(req);
+      if (!sessionId) {
+        return res.status(401).json({ error: "Please sign in to view security reports." });
+      }
+
+      const sessionData = await findSession(sessionId);
+      if (!sessionData) {
+        return res.status(401).json({ error: "Your session has expired. Please sign in again." });
+      }
+
+      try {
+        const report = await getSavedReportById(req.params.id, sessionData.user.id);
+        if (!report) {
+          return res.status(404).json({ error: "Security report not found." });
+        }
+
+        return res.json({
+          success: true,
+          report,
+        });
+      } catch (err) {
+        console.error("[Reports] Get report error:", err);
+        return res.status(500).json({ error: "Failed to retrieve security report." });
+      }
+    });
+
+    // Reports: Delete a single report by ID
+    app.delete("/api/reports/:id", async (req, res) => {
+      const sessionId = getSessionId(req);
+      if (!sessionId) {
+        return res.status(401).json({ error: "Please sign in to manage security reports." });
+      }
+
+      const sessionData = await findSession(sessionId);
+      if (!sessionData) {
+        return res.status(401).json({ error: "Your session has expired. Please sign in again." });
+      }
+
+      try {
+        const deleted = await deleteSavedReport(req.params.id, sessionData.user.id);
+        if (!deleted) {
+          return res.status(404).json({ error: "Security report not found or already deleted." });
+        }
+
+        return res.json({
+          success: true,
+          message: "Security report deleted successfully.",
+        });
+      } catch (err) {
+        console.error("[Reports] Delete report error:", err);
+        return res.status(500).json({ error: "Failed to delete security report." });
+      }
+    });
+
+    // Reports: Clear all saved reports for the authenticated user
+    app.delete("/api/reports", async (req, res) => {
+      const sessionId = getSessionId(req);
+      if (!sessionId) {
+        return res.status(401).json({ error: "Please sign in to manage security reports." });
+      }
+
+      const sessionData = await findSession(sessionId);
+      if (!sessionData) {
+        return res.status(401).json({ error: "Your session has expired. Please sign in again." });
+      }
+
+      try {
+        const count = await clearAllSavedReports(sessionData.user.id);
+        return res.json({
+          success: true,
+          message: "All saved security scan reports have been deleted.",
+          deletedCount: count,
+        });
+      } catch (err) {
+        console.error("[Reports] Clear reports error:", err);
+        return res.status(500).json({ error: "Failed to clear security reports." });
       }
     });
 

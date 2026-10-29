@@ -534,6 +534,814 @@ function initGenerator() {
   validateConfiguration();
 }
 
+// ============================================================================
+// Tool 03: URL & Link Risk Checker Engine
+// ============================================================================
+
+const URL_SUSPICIOUS_TLDS = new Set([
+  "zip", "mov", "country", "stream", "top", "tk", "ml", "ga", "cf", "gq",
+  "work", "date", "kim", "men", "click", "link", "party", "gdn", "mom", "review"
+]);
+
+const URL_TWO_LEVEL_CCTLDS = new Set([
+  "co.uk", "org.uk", "gov.uk", "ac.uk", "me.uk", "ltd.uk", "plc.uk", "police.uk",
+  "com.au", "net.au", "org.au", "edu.au", "gov.au",
+  "co.jp", "ne.jp", "or.jp", "ac.jp", "go.jp",
+  "co.nz", "net.nz", "org.nz", "govt.nz",
+  "com.br", "net.br", "org.br", "gov.br",
+  "com.mx", "org.mx", "edu.mx", "gob.mx",
+  "co.za", "org.za", "web.za", "gov.za",
+  "com.sg", "edu.sg", "gov.sg",
+  "co.in", "net.in", "org.in", "gen.in", "gov.in",
+  "com.cn", "net.cn", "org.cn", "gov.cn",
+  "com.hk", "org.hk", "edu.hk", "gov.hk",
+  "co.kr", "or.kr", "go.kr", "re.kr",
+  "com.tw", "org.tw", "gov.tw", "idv.tw",
+  "com.ar", "gob.ar",
+  "com.co", "gov.co",
+  "co.id", "web.id", "go.id",
+  "com.my", "net.my", "org.my", "gov.my",
+  "com.ph", "gov.ph",
+  "com.tr", "org.tr", "gov.tr",
+  "com.vn", "gov.vn",
+  "co.il", "gov.il",
+  "co.th", "go.th",
+  "com.pk", "org.pk",
+  "com.ng", "gov.ng",
+  "com.pl", "com.pt", "com.es"
+]);
+
+const URL_BRAND_PATTERNS = [
+  { name: "PayPal", key: "paypal", official: ["paypal.com", "paypal.me", "paypal-community.com"] },
+  { name: "Google", key: "google", official: ["google.com", "google.co.uk", "google.ca", "google.de", "google.fr", "google.com.au", "google.co.jp", "googleapis.com", "gstatic.com"] },
+  { name: "Apple", key: "apple", official: ["apple.com", "icloud.com", "appleid.apple.com"] },
+  { name: "Microsoft", key: "microsoft", official: ["microsoft.com", "live.com", "office.com", "office365.com", "outlook.com", "microsoftonline.com", "msn.com"] },
+  { name: "Amazon", key: "amazon", official: ["amazon.com", "amazon.co.uk", "amazon.de", "amazon.fr", "amazon.co.jp", "amazon.ca", "aws.amazon.com"] },
+  { name: "Netflix", key: "netflix", official: ["netflix.com"] },
+  { name: "Chase", key: "chase", official: ["chase.com", "jpmorganchase.com"] },
+  { name: "Bank of America", key: "bankofamerica", official: ["bankofamerica.com", "bofa.com"] },
+  { name: "Wells Fargo", key: "wellsfargo", official: ["wellsfargo.com"] },
+  { name: "Meta / Facebook", key: "facebook", official: ["facebook.com", "fb.com", "meta.com"] },
+  { name: "Instagram", key: "instagram", official: ["instagram.com"] },
+  { name: "Dropbox", key: "dropbox", official: ["dropbox.com"] },
+  { name: "Coinbase", key: "coinbase", official: ["coinbase.com"] },
+  { name: "Binance", key: "binance", official: ["binance.com"] },
+  { name: "Steam", key: "steam", official: ["steampowered.com", "steamcommunity.com"] },
+  { name: "Discord", key: "discord", official: ["discord.com", "discord.gg"] },
+  { name: "GitHub", key: "github", official: ["github.com", "github.io", "github.blog"] },
+];
+
+const URL_PHISHING_MODIFIERS = [
+  "login", "signin", "sign-in", "log-in", "verify", "verification",
+  "security", "secure", "update", "support", "account", "portal",
+  "auth", "billing", "wallet", "recover", "recovery", "alert",
+  "help", "service", "customer", "banking", "online", "client",
+  "protect", "confirm", "validation", "id", "safe", "center"
+];
+
+function checkBrandToken(token, brandKey) {
+  const t = token.toLowerCase();
+  if (t === brandKey) {
+    return { matched: true, type: "exact", token: t };
+  }
+
+  // Leetspeak / typosquatting normalization (0 -> o, 1 -> l, 3 -> e, 5 -> s, @ -> a)
+  const leetNormalized = t
+    .replace(/0/g, "o")
+    .replace(/1/g, "l")
+    .replace(/3/g, "e")
+    .replace(/5/g, "s")
+    .replace(/@/g, "a");
+
+  if (leetNormalized !== t && leetNormalized === brandKey) {
+    return { matched: true, type: "typosquatting", token: t };
+  }
+
+  // Brand + modifier or modifier + brand (e.g. paypallogin, applesupport, chaseonline, loginpaypal)
+  for (const mod of URL_PHISHING_MODIFIERS) {
+    if (t === brandKey + mod || t === mod + brandKey) {
+      return { matched: true, type: "compound", token: t };
+    }
+    if (leetNormalized === brandKey + mod || leetNormalized === mod + brandKey) {
+      return { matched: true, type: "typosquatting_compound", token: t };
+    }
+  }
+
+  return { matched: false };
+}
+
+function extractDomainParts(hostname) {
+  if (!hostname) {
+    return { isIp: false, registeredDomain: "", subdomains: [], subdomain: "", mainLabel: "" };
+  }
+
+  // Strip trailing FQDN dot and lowercase
+  const h = hostname.toLowerCase().replace(/\.+$/, "");
+
+  // Check IPv4
+  const ipv4Regex = /^(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.(?:25[0-5]|2[0-4]\d|[01]?\d\d?)$/;
+  if (ipv4Regex.test(h)) {
+    return { isIp: true, registeredDomain: h, subdomains: [], subdomain: "", mainLabel: h };
+  }
+
+  // Check IPv6
+  if ((h.startsWith("[") && h.endsWith("]")) || (h.includes(":") && !h.includes("."))) {
+    return { isIp: true, registeredDomain: h, subdomains: [], subdomain: "", mainLabel: h };
+  }
+
+  const parts = h.split(".");
+  if (parts.length <= 1) {
+    return { isIp: false, registeredDomain: h, subdomains: [], subdomain: "", mainLabel: h };
+  }
+
+  let registeredDomain = h;
+  let subdomains = [];
+  let mainLabel = parts[0];
+
+  if (parts.length >= 3) {
+    const lastTwo = parts.slice(-2).join(".");
+    if (URL_TWO_LEVEL_CCTLDS.has(lastTwo)) {
+      registeredDomain = parts.slice(-3).join(".");
+      subdomains = parts.slice(0, -3);
+      mainLabel = parts[parts.length - 3];
+    } else {
+      registeredDomain = parts.slice(-2).join(".");
+      subdomains = parts.slice(0, -2);
+      mainLabel = parts[parts.length - 2];
+    }
+  } else if (parts.length === 2) {
+    registeredDomain = parts.join(".");
+    subdomains = [];
+    mainLabel = parts[0];
+  }
+
+  return {
+    isIp: false,
+    registeredDomain,
+    subdomains,
+    subdomain: subdomains.join("."),
+    mainLabel,
+  };
+}
+
+function analyzeUrl(rawInput) {
+  if (typeof rawInput !== "string") {
+    return { isValid: false, error: "Please enter a valid URL string." };
+  }
+
+  const trimmed = rawInput.trim();
+  if (!trimmed) {
+    return { isValid: false, error: "Please enter a URL to inspect." };
+  }
+
+  const schemeMatch = trimmed.match(/^([a-zA-Z][a-zA-Z0-9+.-]*):/);
+  const explicitScheme = schemeMatch ? schemeMatch[1].toLowerCase() : null;
+
+  let parseTarget = trimmed;
+  let inferredScheme = false;
+
+  if (!explicitScheme) {
+    parseTarget = `http://${trimmed}`;
+    inferredScheme = true;
+  }
+
+  let parsed = null;
+  try {
+    parsed = new URL(parseTarget);
+  } catch (_) {
+    return {
+      isValid: false,
+      rawInput: trimmed,
+      error: "The entered text is not a valid URL structure. Please check the spelling or format (e.g. https://example.com/path).",
+    };
+  }
+
+  const findings = [];
+  const facts = [];
+
+  const protocol = parsed.protocol.toLowerCase();
+  const hostname = parsed.hostname.toLowerCase();
+  const domainInfo = extractDomainParts(hostname);
+
+  // Facts
+  facts.push({
+    label: "Protocol / Scheme",
+    value: inferredScheme ? "http (inferred, none specified)" : parsed.protocol.replace(":", ""),
+  });
+  facts.push({
+    label: "Host / Domain",
+    value: parsed.hostname || "(none)",
+  });
+  facts.push({
+    label: "Registered Domain",
+    value: domainInfo.registeredDomain || "(none)",
+  });
+  facts.push({
+    label: "Subdomain(s)",
+    value: domainInfo.subdomain || "(none)",
+  });
+  facts.push({
+    label: "Port",
+    value: parsed.port ? parsed.port : (parsed.protocol === "https:" ? "443 (default HTTPS)" : (parsed.protocol === "http:" ? "80 (default HTTP)" : "default")),
+  });
+  facts.push({
+    label: "Path",
+    value: parsed.pathname || "/",
+  });
+  facts.push({
+    label: "Query Parameters",
+    value: parsed.search ? parsed.search : "(none)",
+  });
+  facts.push({
+    label: "URL Length",
+    value: `${trimmed.length} characters`,
+  });
+
+  // Heuristic Checks
+
+  // 1. Dangerous / Executable Pseudo-Protocols
+  const dangerousSchemes = ["javascript", "data", "vbscript", "file", "blob", "about"];
+  if (explicitScheme && dangerousSchemes.includes(explicitScheme)) {
+    findings.push({
+      id: "dangerous-protocol",
+      title: "Dangerous / Executable URL Scheme",
+      severity: "high",
+      explanation: `The URL uses the '${explicitScheme}:' pseudo-protocol rather than a standard web protocol (HTTP/HTTPS).`,
+      whyItMatters: `Opening '${explicitScheme}:' links can execute arbitrary scripts directly in the client context or access local system files without user authorization.`,
+    });
+  }
+
+  // 2. HTTP vs HTTPS
+  if (protocol === "http:") {
+    findings.push({
+      id: "unencrypted-http",
+      title: "Unencrypted Plaintext Protocol (HTTP)",
+      severity: "warning",
+      explanation: "The URL specifies standard unencrypted HTTP rather than secure HTTPS.",
+      whyItMatters: "HTTP traffic is transmitted in cleartext and can be monitored, stolen, or altered by anyone on the local network (such as public Wi-Fi). Legitimate authentication and data services almost universally enforce HTTPS.",
+    });
+  }
+
+  // 3. Raw IP Address Host
+  if (domainInfo.isIp) {
+    findings.push({
+      id: "raw-ip-host",
+      title: "Raw IP Address Used as Host",
+      severity: "suspicious",
+      explanation: `The URL connects directly to an IP address (${hostname}) instead of a registered domain name.`,
+      whyItMatters: "Legitimate websites almost always use branded domain names. Attackers often use raw IP addresses to host malicious servers without registering domains or to bypass domain-based reputation filters.",
+    });
+  }
+
+  // 4. Deceptive Embedded Credentials / Authority (@ symbol trick)
+  // Only triggers when '@' occurs in the authority component before the host (e.g. https://target.com@attacker.com)
+  // NOT when '@' is in path (/user/@handle) or query string (?email=user@domain.com).
+  const authorityPart = trimmed.replace(/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//, "").split(/[\/?#]/)[0] || "";
+  const hasAuthorityAt = Boolean(parsed.username || parsed.password || authorityPart.includes("@"));
+
+  if (hasAuthorityAt) {
+    findings.push({
+      id: "embedded-credentials",
+      title: "Deceptive Embedded Authority (@ Symbol)",
+      severity: "high",
+      explanation: `Observable indicator: The URL contains an '@' character in the authority portion before the host. The browser connects to '${hostname}', ignoring credentials or text preceding the '@'.`,
+      whyItMatters: "This is a classic phishing deception (e.g. 'https://trusted-bank.com@evil-site.net') designed to mislead victims who only glance at the front of the URL.",
+    });
+  }
+
+  // 5. Punycode (IDN) & Homoglyph
+  if (hostname.includes("xn--")) {
+    findings.push({
+      id: "punycode-domain",
+      title: "Punycode Encoded Domain (IDN)",
+      severity: "warning",
+      explanation: `The hostname uses Punycode (${hostname}) to encode non-ASCII characters into an ASCII string.`,
+      whyItMatters: "While used legitimately for internationalized domain names in native scripts, attackers frequently use Punycode for homoglyph attacks—registering visually indistinguishable lookalike characters (such as Cyrillic 'а' replacing Latin 'a') to mimic trusted domains.",
+    });
+  }
+
+  // 6. Invisible / Zero-width / Control characters
+  const hiddenCharsRegex = /[\u200B-\u200D\uFEFF\u00AD\u202E\u202D\u200E\u200F\r\n\t]/;
+  if (hiddenCharsRegex.test(trimmed)) {
+    findings.push({
+      id: "hidden-characters",
+      title: "Invisible or Directional Control Characters",
+      severity: "high",
+      explanation: "The link contains invisible, zero-width, or bidirectional control characters.",
+      whyItMatters: "These characters are hidden from human view in address bars and link previews, and are frequently weaponized to spoof visual destinations or evade spam detection.",
+    });
+  }
+
+  // 7. Excessive Subdomains
+  if (domainInfo.subdomains.length >= 3) {
+    findings.push({
+      id: "excessive-subdomains",
+      title: "Excessive Subdomain Hierarchy",
+      severity: "warning",
+      explanation: `The hostname contains ${domainInfo.subdomains.length} subdomain levels ('${domainInfo.subdomain}').`,
+      whyItMatters: "Phishing operators frequently chain subdomains together to place familiar brand names (e.g. 'paypal.com.account.verify.evil.com') at the front of long hostnames.",
+    });
+  }
+
+  // 8. Brand Impersonation / Typosquatting
+  for (const brand of URL_BRAND_PATTERNS) {
+    const isOfficial = brand.official.some((off) => {
+      return domainInfo.registeredDomain === off || hostname.endsWith("." + off);
+    });
+    if (isOfficial) continue;
+
+    let brandMatch = null;
+    const allLabels = hostname.split(".");
+    for (const label of allLabels) {
+      // Split label on hyphens and underscores to evaluate discrete tokens
+      const tokens = label.split(/[-_]+/);
+      for (const token of tokens) {
+        const res = checkBrandToken(token, brand.key);
+        if (res.matched) {
+          const isSub = domainInfo.subdomains.some((s) => s.includes(label));
+          brandMatch = {
+            token: res.token,
+            type: res.type,
+            isSubdomain: isSub,
+          };
+          break;
+        }
+      }
+      if (brandMatch) break;
+    }
+
+    if (brandMatch) {
+      let explanation;
+      if (brandMatch.type.startsWith("typosquatting")) {
+        explanation = `Observable indicator: The domain contains '${brandMatch.token}', a typosquatting / character substitution permutation of '${brand.name}' ('${brand.key}'). Target destination host: '${domainInfo.registeredDomain}'.`;
+      } else if (brandMatch.isSubdomain) {
+        explanation = `Observable indicator: The brand name '${brand.name}' ('${brandMatch.token}') appears in subdomain '${domainInfo.subdomain}', while the actual destination host is '${domainInfo.registeredDomain}'.`;
+      } else {
+        explanation = `Observable indicator: The registered domain '${domainInfo.registeredDomain}' incorporates the brand name '${brand.name}' ('${brandMatch.token}'), but is not an official domain for that service.`;
+      }
+
+      findings.push({
+        id: `brand-impersonation-${brand.key}`,
+        title: brandMatch.type.startsWith("typosquatting")
+          ? `Potential Typosquatting / Lookalike Brand ('${brand.name}')`
+          : `Potential Brand Impersonation in Domain ('${brand.name}')`,
+        severity: "suspicious",
+        explanation,
+        whyItMatters: "Phishing operators frequently construct lookalike domains or deceptive subdomain chains mimicking trusted services to deceive users into disclosing credentials or financial details. (This is a structural heuristic warning, not a live threat intelligence confirmation).",
+      });
+    }
+  }
+
+  // 8b. Deceptive TLD inside Subdomain Structure (e.g. brand.com.attacker.net)
+  const deceptiveTldsInSub = ["com", "net", "org", "gov", "edu", "io", "co", "uk", "us", "de", "ca", "app", "dev"];
+  const hasTldInSubdomain = domainInfo.subdomains.some((s) => deceptiveTldsInSub.includes(s));
+  if (hasTldInSubdomain) {
+    findings.push({
+      id: "embedded-tld-subdomain",
+      title: "Deceptive TLD in Subdomain Structure",
+      severity: "suspicious",
+      explanation: `Observable indicator: The subdomain structure ('${domainInfo.subdomain}') contains a top-level domain label (such as '.com' or '.net') preceding the actual destination domain ('${domainInfo.registeredDomain}').`,
+      whyItMatters: "Attackers frequently create subdomains formatted like complete domains (e.g. 'paypal.com.account-verify.net') so users who only glance at the front of the URL mistakenly believe they are visiting the brand's primary site.",
+    });
+  }
+
+  // 9. High-Abuse / File-Extension TLD
+  const tld = hostname.split(".").pop();
+  if (tld && URL_SUSPICIOUS_TLDS.has(tld)) {
+    findings.push({
+      id: "suspicious-tld",
+      title: `High-Abuse or File-Extension TLD ('.${tld}')`,
+      severity: "notice",
+      explanation: `The domain uses the '.${tld}' top-level domain.`,
+      whyItMatters: "TLDs such as '.zip' and '.mov' can be confused with file formats, and certain low-cost TLDs have historically experienced high abuse rates in automated spam campaigns. (A TLD alone does not confirm malice).",
+    });
+  }
+
+  // 10. Non-Standard Web Port
+  if (parsed.port && parsed.port !== "80" && parsed.port !== "443") {
+    findings.push({
+      id: "non-standard-port",
+      title: `Non-Standard Web Port (:${parsed.port})`,
+      severity: "warning",
+      explanation: `The URL connects through port ${parsed.port} rather than the standard web ports (80 for HTTP, 443 for HTTPS).`,
+      whyItMatters: "Production consumer websites rarely direct visitors to custom ports. Custom ports can indicate test environments, unhardened services, or evasion attempts.",
+    });
+  }
+
+  // 11. Suspicious Character Encoding Obfuscation
+  // Evaluates path separators / traversal in path, null bytes, hostname encoding, or query traversal.
+  // Avoids false positives on legitimate encoded query parameters (such as search queries with '%', or encoded redirect URIs).
+  if (/(%00|\0)/i.test(trimmed)) {
+    findings.push({
+      id: "suspicious-encoding",
+      title: "Null Byte Injection Sequence (%00)",
+      severity: "high",
+      explanation: "Observable indicator: The URL contains a null byte (%00) injection sequence.",
+      whyItMatters: "Null bytes are historically weaponized to exploit backend string termination vulnerabilities and bypass file-extension validation.",
+    });
+  } else {
+    const pathBeforeQuery = trimmed.replace(/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\/[^\/?#]+/, "").split(/[?#]/)[0] || "";
+    const isPathEncoded = /(%2e|%2f|%5c|%252e|%252f|%255c)/i.test(pathBeforeQuery) || /(%2e|%2f|%5c|%252e|%252f|%255c)/i.test(parsed.pathname);
+    const isHostEncoded = /%[0-9a-f]{2}/i.test(parsed.hostname);
+    const isQueryTraversal = /(%2e%2e|\.\.%2f|\.\.%5c|%252e%252e)/i.test(parsed.search);
+
+    if (isPathEncoded) {
+      findings.push({
+        id: "suspicious-encoding",
+        title: "Suspicious Path-Encoding Obfuscation",
+        severity: "warning",
+        explanation: "Observable indicator: The URL path contains percent-encoded path separators (%2f, %5c) or dot sequences (%2e).",
+        whyItMatters: "Encoding slashes or dots in the URL path is commonly used to evade Web Application Firewall (WAF) path filters, hide traversal payloads, or exploit normalization discrepancies.",
+      });
+    } else if (isHostEncoded) {
+      findings.push({
+        id: "suspicious-encoding",
+        title: "Percent-Encoded Hostname Obfuscation",
+        severity: "warning",
+        explanation: "Observable indicator: The hostname contains percent-encoded character sequences.",
+        whyItMatters: "Encoding characters in domain names can be used to disguise the destination host from casual inspection and filter rules.",
+      });
+    } else if (isQueryTraversal) {
+      findings.push({
+        id: "suspicious-encoding",
+        title: "Path Traversal Sequence in Query Parameters",
+        severity: "warning",
+        explanation: "Observable indicator: The query string contains directory traversal sequences (such as '..%2f' or '%2e%2e').",
+        whyItMatters: "Traversal sequences in query parameters frequently target local file inclusion (LFI) or arbitrary file read vulnerabilities on backend servers.",
+      });
+    }
+  }
+
+  // 12. Consecutive Slashes / Backslashes
+  if (parsed.pathname.includes("//") || trimmed.includes("\\")) {
+    findings.push({
+      id: "path-anomaly",
+      title: "Consecutive Slashes or Backslashes in Path",
+      severity: "notice",
+      explanation: "The URL contains multiple consecutive forward slashes ('//') or backslashes ('\\') in the path.",
+      whyItMatters: "Server implementations handle consecutive slashes and backslashes inconsistently, which can result in path normalization discrepancies or open redirects.",
+    });
+  }
+
+  // 13. Abnormally Long URL
+  if (trimmed.length > 250) {
+    findings.push({
+      id: "excessive-length",
+      title: `Abnormally Long URL (${trimmed.length} characters)`,
+      severity: "notice",
+      explanation: "The link exceeds 250 characters in length.",
+      whyItMatters: "Extremely long URLs are sometimes used in tracking redirect chains or to push suspicious domain names off-screen on mobile devices.",
+    });
+  }
+
+  // Verdict Calculation
+  let severityScore = 0;
+  for (const f of findings) {
+    if (f.severity === "high") severityScore += 15;
+    else if (f.severity === "suspicious") severityScore += 7;
+    else if (f.severity === "warning") severityScore += 3;
+    else severityScore += 1;
+  }
+
+  let verdict;
+  if (findings.length === 0) {
+    verdict = {
+      level: "clean",
+      title: "No Obvious Red Flags Detected",
+      summary: "No suspicious structural indicators were detected in the checks performed.",
+    };
+  } else if (severityScore >= 12 || findings.some((f) => f.severity === "high")) {
+    verdict = {
+      level: "high",
+      title: "High Risk / Suspicious Indicators",
+      summary: "Strong indicators of deception, evasion, or hostile URL structures were detected.",
+    };
+  } else if (severityScore >= 6 || findings.some((f) => f.severity === "suspicious")) {
+    verdict = {
+      level: "medium",
+      title: "Elevated Caution / Heuristic Warnings",
+      summary: "Multiple warning flags were detected that warrant elevated caution.",
+    };
+  } else {
+    verdict = {
+      level: "low",
+      title: "Low Heuristic Concern",
+      summary: "Minor structural anomalies or non-standard attributes were noted.",
+    };
+  }
+
+  const disclaimers = [
+    "Heuristic analysis evaluates the structural format and text patterns of a URL without fetching external servers or downloading files.",
+    "HTTPS provides encrypted transit between your browser and the server, but does NOT guarantee the destination site is legitimate or safe.",
+    "The absence of detected indicators does NOT establish that a website is free of malware, phishing forms, or other threats.",
+    "CipherCheck does not query live threat-intelligence APIs or blocklists for this local check.",
+  ];
+
+  return {
+    isValid: true,
+    rawInput: trimmed,
+    normalizedUrl: parsed.href,
+    urlParts: {
+      protocol: parsed.protocol.replace(":", ""),
+      hostname: parsed.hostname,
+      registeredDomain: domainInfo.registeredDomain,
+      subdomain: domainInfo.subdomain,
+      port: parsed.port || (parsed.protocol === "https:" ? "443" : "80"),
+      pathname: parsed.pathname || "/",
+      search: parsed.search || "",
+      hash: parsed.hash || "",
+      username: parsed.username || "",
+      password: parsed.password || "",
+    },
+    verdict,
+    facts,
+    findings,
+    disclaimers,
+  };
+}
+
+function formatUrlReport(analysis) {
+  if (!analysis || !analysis.isValid) {
+    return "No valid analysis available to export.";
+  }
+
+  const lines = [
+    "================================================================================",
+    "CIPHERCHECK — LINK & URL RISK ANALYSIS REPORT",
+    "================================================================================",
+    `Target URL:      ${analysis.rawInput}`,
+    `Generated:       ${new Date().toISOString()}`,
+    `Assessment Type: Local Static Structural Heuristic (Zero Outbound Requests)`,
+    "",
+    `VERDICT: ${analysis.verdict.title.toUpperCase()}`,
+    `Summary: ${analysis.verdict.summary}`,
+    "",
+    "OBSERVED STRUCTURAL FACTS:",
+  ];
+
+  for (const fact of analysis.facts) {
+    lines.push(`- ${fact.label}: ${fact.value}`);
+  }
+
+  lines.push("");
+  lines.push(`DETECTED STRUCTURAL INDICATORS (${analysis.findings.length}):`);
+
+  if (analysis.findings.length === 0) {
+    lines.push("- None. No obvious red flags detected in the checks performed.");
+  } else {
+    for (const f of analysis.findings) {
+      lines.push(`[${f.severity.toUpperCase()}] ${f.title}`);
+      lines.push(`  Explanation:    ${f.explanation}`);
+      lines.push(`  Why it matters: ${f.whyItMatters}`);
+      lines.push("");
+    }
+  }
+
+  lines.push("DISCLAIMERS & HEURISTIC LIMITATIONS:");
+  for (const d of analysis.disclaimers) {
+    lines.push(`* ${d}`);
+  }
+
+  lines.push("================================================================================");
+  return lines.join("\n");
+}
+
+function escapeHtml(str) {
+  if (!str) return "";
+  return String(str)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
+function initUrlChecker() {
+  const urlInput = document.getElementById("urlInput");
+  const analyzeBtn = document.getElementById("analyzeUrlButton");
+  const urlResults = document.getElementById("urlResults");
+  const urlErrorStatus = document.getElementById("urlErrorStatus");
+  const urlVerdictCard = document.getElementById("urlVerdictCard");
+  const urlVerdictTitle = document.getElementById("urlVerdictTitle");
+  const urlVerdictSummary = document.getElementById("urlVerdictSummary");
+  const urlFindingCount = document.getElementById("urlFindingCount");
+  const urlFactsGrid = document.getElementById("urlFactsGrid");
+  const urlFindingsList = document.getElementById("urlFindingsList");
+  const urlFindingsCounter = document.getElementById("urlFindingsCounter");
+  const copyUrlReportBtn = document.getElementById("copyUrlReportBtn");
+  const copyUrlFeedback = document.getElementById("copyUrlFeedback");
+  const saveUrlReportBtn = document.getElementById("saveUrlReportBtn");
+  const saveUrlReportLabel = document.getElementById("saveUrlReportLabel");
+  const sampleBtns = document.querySelectorAll(".sample-url-btn");
+
+  if (!urlInput || !analyzeBtn || !urlResults) return;
+
+  let currentAnalysis = null;
+
+  function runAnalysis() {
+    const val = urlInput.value;
+    if (urlErrorStatus) {
+      urlErrorStatus.style.display = "none";
+      urlErrorStatus.textContent = "";
+    }
+
+    if (saveUrlReportBtn) {
+      saveUrlReportBtn.disabled = false;
+    }
+    if (saveUrlReportLabel) {
+      saveUrlReportLabel.textContent = "Save Report";
+    }
+
+    const res = analyzeUrl(val);
+    if (!res.isValid) {
+      urlResults.hidden = true;
+      if (urlErrorStatus) {
+        urlErrorStatus.textContent = res.error || "Please enter a valid URL.";
+        urlErrorStatus.dataset.state = "error";
+        urlErrorStatus.style.display = "block";
+      }
+      return;
+    }
+
+    currentAnalysis = res;
+
+    // Verdict Card
+    if (urlVerdictCard) {
+      urlVerdictCard.setAttribute("data-verdict", res.verdict.level);
+    }
+    if (urlVerdictTitle) {
+      urlVerdictTitle.textContent = res.verdict.title;
+    }
+    if (urlVerdictSummary) {
+      urlVerdictSummary.textContent = res.verdict.summary;
+    }
+    if (urlFindingCount) {
+      urlFindingCount.textContent = `${res.findings.length} indicator${res.findings.length === 1 ? "" : "s"} detected`;
+    }
+
+    // Facts Grid
+    if (urlFactsGrid) {
+      urlFactsGrid.innerHTML = "";
+      for (const fact of res.facts) {
+        const item = document.createElement("div");
+        item.className = "url-fact-item";
+        item.innerHTML = `<dt>${escapeHtml(fact.label)}</dt><dd>${escapeHtml(fact.value)}</dd>`;
+        urlFactsGrid.appendChild(item);
+      }
+    }
+
+    // Findings List
+    if (urlFindingsList) {
+      urlFindingsList.innerHTML = "";
+      if (urlFindingsCounter) {
+        urlFindingsCounter.textContent = `${res.findings.length} finding${res.findings.length === 1 ? "" : "s"}`;
+      }
+
+      if (res.findings.length === 0) {
+        const noFindings = document.createElement("li");
+        noFindings.className = "url-no-findings";
+        noFindings.innerHTML = `
+          <svg viewBox="0 0 20 20" fill="none" width="18" height="18" aria-hidden="true">
+            <circle cx="10" cy="10" r="8" stroke="currentColor" stroke-width="1.5" />
+            <path d="m6.5 10 2.5 2.5 4.5-5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+          <span>No obvious structural red flags detected in the checks performed. Remember to stay vigilant.</span>
+        `;
+        urlFindingsList.appendChild(noFindings);
+      } else {
+        for (const finding of res.findings) {
+          const li = document.createElement("li");
+          li.className = "url-finding-item";
+          li.setAttribute("data-severity", finding.severity);
+          li.innerHTML = `
+            <div class="url-finding-head">
+              <h5 class="url-finding-title">${escapeHtml(finding.title)}</h5>
+              <span class="url-finding-severity">${escapeHtml(finding.severity)}</span>
+            </div>
+            <p class="url-finding-explanation">${escapeHtml(finding.explanation)}</p>
+            <p class="url-finding-matters"><strong>Why it matters:</strong> ${escapeHtml(finding.whyItMatters)}</p>
+          `;
+          urlFindingsList.appendChild(li);
+        }
+      }
+    }
+
+    urlResults.hidden = false;
+  }
+
+  analyzeBtn.addEventListener("click", runAnalysis);
+
+  urlInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      runAnalysis();
+    }
+  });
+
+  sampleBtns.forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const sample = btn.getAttribute("data-sample");
+      if (sample) {
+        urlInput.value = sample;
+        runAnalysis();
+      }
+    });
+  });
+
+  if (copyUrlReportBtn) {
+    copyUrlReportBtn.addEventListener("click", async () => {
+      if (!currentAnalysis) return;
+      const report = formatUrlReport(currentAnalysis);
+      try {
+        if (!navigator.clipboard || !navigator.clipboard.writeText) {
+          throw new Error("Clipboard unavailable");
+        }
+        await navigator.clipboard.writeText(report);
+        if (copyUrlFeedback) {
+          copyUrlFeedback.textContent = "✓ Report copied to clipboard!";
+          setTimeout(() => {
+            copyUrlFeedback.textContent = "";
+          }, 3000);
+        }
+      } catch (_) {
+        if (copyUrlFeedback) {
+          copyUrlFeedback.textContent = "Could not copy automatically. Please copy report text manually.";
+        }
+      }
+    });
+  }
+
+  if (saveUrlReportBtn) {
+    saveUrlReportBtn.addEventListener("click", async () => {
+      if (!currentAnalysis) return;
+
+      const user = window.CipherCheckAuth?.getCurrentUser();
+      const token = sessionStorage.getItem("ciphercheck_token");
+      if (!user && !token) {
+        if (copyUrlFeedback) {
+          copyUrlFeedback.textContent = "Please sign in or register to save reports to your dashboard.";
+          setTimeout(() => {
+            if (copyUrlFeedback.textContent.includes("Please sign in")) {
+              copyUrlFeedback.textContent = "";
+            }
+          }, 4500);
+        }
+        window.CipherCheckAuth?.openAuthModal();
+        return;
+      }
+
+      saveUrlReportBtn.disabled = true;
+      if (saveUrlReportLabel) saveUrlReportLabel.textContent = "Saving...";
+
+      try {
+        const headers = window.CipherCheckAuth?.getAuthHeaders() || {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        };
+        const res = await fetch("/api/reports", {
+          method: "POST",
+          headers,
+          credentials: "include",
+          body: JSON.stringify({ analysis: currentAnalysis }),
+        });
+
+        const data = await res.json();
+        if (res.status === 201 && data.success) {
+          if (saveUrlReportLabel) saveUrlReportLabel.textContent = "✓ Saved to Dashboard";
+          if (copyUrlFeedback) {
+            copyUrlFeedback.textContent = "✓ Report saved to your private dashboard!";
+            setTimeout(() => {
+              if (copyUrlFeedback.textContent.includes("✓ Report saved")) {
+                copyUrlFeedback.textContent = "";
+              }
+            }, 3500);
+          }
+          window.dispatchEvent(new CustomEvent("ciphercheck:reportschanged"));
+        } else if (res.status === 401) {
+          saveUrlReportBtn.disabled = false;
+          if (saveUrlReportLabel) saveUrlReportLabel.textContent = "Save Report";
+          if (copyUrlFeedback) {
+            copyUrlFeedback.textContent = "Session expired. Please sign in again.";
+          }
+          window.CipherCheckAuth?.openAuthModal();
+        } else {
+          saveUrlReportBtn.disabled = false;
+          if (saveUrlReportLabel) saveUrlReportLabel.textContent = "Save Report";
+          if (copyUrlFeedback) {
+            copyUrlFeedback.textContent = data.error || "Failed to save security report.";
+          }
+        }
+      } catch (err) {
+        saveUrlReportBtn.disabled = false;
+        if (saveUrlReportLabel) saveUrlReportLabel.textContent = "Save Report";
+        if (copyUrlFeedback) {
+          copyUrlFeedback.textContent = "Connection error. Please try again.";
+        }
+      }
+    });
+  }
+}
+
 const THEME_STORAGE_KEY = "ciphercheck-theme";
 
 function applyTheme(theme, isUserAction = false) {
@@ -682,6 +1490,19 @@ function initAuth() {
     return headers;
   }
 
+  window.CipherCheckAuth = {
+    getAuthHeaders,
+    getCurrentUser: () => currentUser,
+    openAuthModal: () => {
+      if (dialog && typeof dialog.showModal === "function") {
+        dialog.showModal();
+      } else if (dialog) {
+        dialog.setAttribute("open", "");
+      }
+      if (openBtn) openBtn.setAttribute("aria-expanded", "true");
+    },
+  };
+
   const updateAuthUI = (user) => {
     currentUser = user;
     if (user) {
@@ -747,6 +1568,7 @@ function initAuth() {
       if (guestView) guestView.hidden = false;
       if (userView) userView.hidden = true;
     }
+    window.dispatchEvent(new CustomEvent("ciphercheck:authchange", { detail: { user } }));
   };
 
   if (editNicknameBtn) {
@@ -1289,10 +2111,651 @@ function initAuth() {
   checkSession();
 }
 
+function initSecurityDashboard() {
+  const dashboardGuestCard = document.getElementById("dashboardGuestCard");
+  const dashboardAuthContent = document.getElementById("dashboardAuthContent");
+  const dashboardSignInBtn = document.getElementById("dashboardSignInBtn");
+  const dashboardSyncTag = document.getElementById("dashboardSyncTag");
+
+  const statTotal = document.getElementById("statTotalReports");
+  const statClean = document.getElementById("statCleanReports");
+  const statLow = document.getElementById("statLowReports");
+  const statMedium = document.getElementById("statMediumReports");
+  const statHigh = document.getElementById("statHighReports");
+
+  const searchInput = document.getElementById("dashboardSearchInput");
+  const filterChips = document.querySelectorAll(".dashboard-filter-group .filter-chip");
+  const refreshBtn = document.getElementById("refreshDashboardBtn");
+  const clearHistoryBtn = document.getElementById("clearHistoryBtn");
+
+  const reportsContainer = document.getElementById("dashboardReportsContainer");
+  const loadingIndicator = document.getElementById("dashboardLoading");
+  const emptyState = document.getElementById("dashboardEmptyState");
+  const emptyMessage = document.getElementById("dashboardEmptyMessage");
+  const reportsList = document.getElementById("dashboardReportsList");
+
+  const paginationBar = document.getElementById("dashboardPaginationBar");
+  const paginationInfo = document.getElementById("paginationInfo");
+  const prevPageBtn = document.getElementById("prevPageBtn");
+  const nextPageBtn = document.getElementById("nextPageBtn");
+
+  const reportDetailDialog = document.getElementById("reportDetailDialog");
+  const reportDetailClose = document.getElementById("reportDetailClose");
+  const reportDetailModalTitle = document.getElementById("reportDetailModalTitle");
+  const reportDetailBody = document.getElementById("reportDetailBody");
+  const copyDetailReportBtn = document.getElementById("copyDetailReportBtn");
+  const deleteDetailReportBtn = document.getElementById("deleteDetailReportBtn");
+  const detailFeedback = document.getElementById("detailFeedback");
+
+  const confirmClearDialog = document.getElementById("confirmClearDialog");
+  const confirmClearClose = document.getElementById("confirmClearClose");
+  const cancelClearBtn = document.getElementById("cancelClearBtn");
+  const executeClearBtn = document.getElementById("executeClearBtn");
+
+  let currentRiskFilter = "all";
+  let currentSearchQuery = "";
+  let currentPage = 1;
+  const pageSize = 10;
+  let cachedReports = [];
+  let activeModalReport = null;
+  let searchDebounceTimer = null;
+
+  function updateSyncTag(isAuth) {
+    if (!dashboardSyncTag) return;
+    if (isAuth) {
+      dashboardSyncTag.textContent = "ACCOUNT SYNCED";
+      dashboardSyncTag.classList.remove("guest-mode");
+    } else {
+      dashboardSyncTag.textContent = "GUEST MODE";
+      dashboardSyncTag.classList.add("guest-mode");
+    }
+  }
+
+  function renderStats(stats = {}) {
+    const total = stats.total || 0;
+    const byRisk = stats.byRisk || {};
+    if (statTotal) statTotal.textContent = total;
+    if (statClean) statClean.textContent = byRisk.clean || 0;
+    if (statLow) statLow.textContent = byRisk.low || 0;
+    if (statMedium) statMedium.textContent = byRisk.medium || 0;
+    if (statHigh) statHigh.textContent = byRisk.high || 0;
+  }
+
+  function getRiskBadgeLabel(risk) {
+    switch (risk) {
+      case "clean":
+        return "No Flags";
+      case "low":
+        return "Low Concern";
+      case "medium":
+        return "Elevated Caution";
+      case "high":
+        return "High Risk";
+      default:
+        return "Recorded";
+    }
+  }
+
+  function formatDisplayDate(dateStr) {
+    if (!dateStr) return "";
+    try {
+      const d = new Date(dateStr);
+      return d.toLocaleDateString(undefined, {
+        month: "short",
+        day: "numeric",
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+    } catch (_) {
+      return dateStr;
+    }
+  }
+
+  async function loadDashboardData(page = 1) {
+    const user = window.CipherCheckAuth?.getCurrentUser();
+    const token = sessionStorage.getItem("ciphercheck_token");
+
+    if (!user && !token) {
+      if (dashboardGuestCard) dashboardGuestCard.style.display = "flex";
+      if (dashboardAuthContent) dashboardAuthContent.style.display = "none";
+      updateSyncTag(false);
+      renderStats({});
+      return;
+    }
+
+    if (dashboardGuestCard) dashboardGuestCard.style.display = "none";
+    if (dashboardAuthContent) dashboardAuthContent.style.display = "block";
+    updateSyncTag(true);
+
+    if (loadingIndicator) loadingIndicator.style.display = "block";
+    if (emptyState) emptyState.style.display = "none";
+
+    const offset = (page - 1) * pageSize;
+    const params = new URLSearchParams({
+      limit: String(pageSize),
+      offset: String(offset),
+      risk: currentRiskFilter,
+    });
+    if (currentSearchQuery) {
+      params.set("search", currentSearchQuery);
+    }
+
+    try {
+      const headers = window.CipherCheckAuth?.getAuthHeaders() || {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      };
+
+      const res = await fetch(`/api/reports?${params.toString()}`, {
+        method: "GET",
+        headers,
+        credentials: "include",
+      });
+
+      if (res.status === 401) {
+        if (dashboardGuestCard) dashboardGuestCard.style.display = "flex";
+        if (dashboardAuthContent) dashboardAuthContent.style.display = "none";
+        updateSyncTag(false);
+        renderStats({});
+        return;
+      }
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to load reports");
+      }
+
+      cachedReports = data.reports || [];
+      currentPage = page;
+      renderStats(data.stats);
+
+      const totalCount = data.pagination?.total || 0;
+      renderReportsList(cachedReports, totalCount, offset);
+    } catch (err) {
+      console.error("[Dashboard] Error loading saved reports:", err);
+      if (reportsList) reportsList.innerHTML = "";
+      if (emptyState) {
+        emptyState.style.display = "block";
+        if (emptyMessage) {
+          emptyMessage.textContent = "Unable to load saved reports at this time. Please check your connection and try again.";
+        }
+      }
+      if (paginationBar) paginationBar.style.display = "none";
+    } finally {
+      if (loadingIndicator) loadingIndicator.style.display = "none";
+    }
+  }
+
+  function renderReportsList(reports, totalCount, offset) {
+    if (!reportsList) return;
+    reportsList.innerHTML = "";
+
+    if (!reports || reports.length === 0) {
+      if (emptyState) {
+        emptyState.style.display = "block";
+        if (emptyMessage) {
+          if (currentSearchQuery || currentRiskFilter !== "all") {
+            emptyMessage.textContent = "No saved scan reports match your current filter or search criteria. Try choosing another filter or clearing your search.";
+          } else {
+            emptyMessage.textContent = "You haven’t saved any URL security assessments yet. Analyze a web link above and click \"Save Report\" to build your private security scan history.";
+          }
+        }
+      }
+      if (paginationBar) paginationBar.style.display = "none";
+      return;
+    }
+
+    if (emptyState) emptyState.style.display = "none";
+
+    reports.forEach((rep) => {
+      const li = document.createElement("li");
+      li.className = "report-card";
+      li.setAttribute("data-risk", rep.riskLevel || "clean");
+      li.setAttribute("data-id", rep.id);
+
+      const badgeLabel = getRiskBadgeLabel(rep.riskLevel);
+      const displayHost = rep.hostname || rep.registeredDomain || "Unknown Host";
+      const displayDate = formatDisplayDate(rep.createdAt);
+      const displayUrl = rep.redactedUrl || rep.url;
+      const findingsCount = rep.findingsCount ?? (rep.analysisData?.findings?.length || 0);
+
+      li.innerHTML = `
+        <div class="report-card-top">
+          <div class="report-card-title-group">
+            <span class="report-verdict-badge ${escapeHtml(rep.riskLevel || "clean")}">${escapeHtml(badgeLabel)}</span>
+            <strong class="report-card-host">${escapeHtml(displayHost)}</strong>
+            ${rep.registeredDomain && rep.registeredDomain !== rep.hostname ? `<span class="report-card-domain">(${escapeHtml(rep.registeredDomain)})</span>` : ""}
+          </div>
+          <span class="report-card-date">${escapeHtml(displayDate)}</span>
+        </div>
+        <div class="report-card-url" title="${escapeHtml(displayUrl)}">${escapeHtml(displayUrl)}</div>
+        <div class="report-card-summary">${escapeHtml(rep.verdictSummary || rep.verdictTitle || "Security analysis report")}</div>
+        <div class="report-card-footer">
+          <span class="report-card-findings-pill">${findingsCount} indicator${findingsCount === 1 ? "" : "s"}</span>
+          <div class="report-card-actions">
+            <button class="button button-sm button-secondary inspect-report-btn" type="button" data-id="${escapeHtml(rep.id)}">
+              Inspect Findings
+            </button>
+            <button class="button button-sm button-outline danger-btn delete-report-btn" type="button" data-id="${escapeHtml(rep.id)}" title="Delete this saved report" aria-label="Delete report for ${escapeHtml(displayHost)}">
+              <svg viewBox="0 0 16 16" fill="none" width="13" height="13" aria-hidden="true">
+                <path d="M3 4h10M6 4V2.5A.5.5 0 0 1 6.5 2h3a.5.5 0 0 1 .5.5V4m2 0v9.5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+      `;
+
+      reportsList.appendChild(li);
+    });
+
+    // Wire pagination bar
+    if (paginationBar) {
+      if (totalCount > pageSize || offset > 0) {
+        paginationBar.style.display = "flex";
+        const start = offset + 1;
+        const end = Math.min(offset + reports.length, totalCount);
+        if (paginationInfo) {
+          paginationInfo.textContent = `Showing ${start}–${end} of ${totalCount} saved reports`;
+        }
+        if (prevPageBtn) {
+          prevPageBtn.disabled = currentPage <= 1;
+        }
+        if (nextPageBtn) {
+          nextPageBtn.disabled = end >= totalCount;
+        }
+      } else {
+        paginationBar.style.display = "none";
+      }
+    }
+  }
+
+  function openReportModal(report) {
+    if (!reportDetailDialog || !report) return;
+    activeModalReport = report;
+
+    if (detailFeedback) detailFeedback.textContent = "";
+
+    const host = report.hostname || report.registeredDomain || "Report";
+    if (reportDetailModalTitle) {
+      reportDetailModalTitle.textContent = `${host} Analysis`;
+    }
+
+    const badgeLabel = getRiskBadgeLabel(report.riskLevel);
+    const analysis = report.analysisData || {};
+    const facts = analysis.facts || [
+      { label: "Destination Host", value: report.hostname },
+      { label: "Registered Domain", value: report.registeredDomain },
+      { label: "Recorded Risk", value: badgeLabel },
+    ];
+    const findings = analysis.findings || [];
+
+    let factsHtml = "";
+    facts.forEach((f) => {
+      factsHtml += `<div class="modal-fact-item"><dt>${escapeHtml(f.label)}</dt><dd>${escapeHtml(f.value)}</dd></div>`;
+    });
+
+    let findingsHtml = "";
+    if (findings.length === 0) {
+      findingsHtml = `
+        <div class="url-no-findings" style="margin-top: 12px;">
+          <svg viewBox="0 0 20 20" fill="none" width="18" height="18" aria-hidden="true">
+            <circle cx="10" cy="10" r="8" stroke="currentColor" stroke-width="1.5" />
+            <path d="m6.5 10 2.5 2.5 4.5-5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+          <span>No obvious structural red flags detected in the checks performed.</span>
+        </div>
+      `;
+    } else {
+      findingsHtml = '<ul class="url-findings-list" style="margin-top: 12px;">';
+      findings.forEach((finding) => {
+        findingsHtml += `
+          <li class="url-finding-item" data-severity="${escapeHtml(finding.severity)}">
+            <div class="url-finding-head">
+              <h5 class="url-finding-title">${escapeHtml(finding.title)}</h5>
+              <span class="url-finding-severity">${escapeHtml(finding.severity)}</span>
+            </div>
+            <p class="url-finding-explanation">${escapeHtml(finding.explanation)}</p>
+            <p class="url-finding-matters"><strong>Why it matters:</strong> ${escapeHtml(finding.whyItMatters)}</p>
+          </li>
+        `;
+      });
+      findingsHtml += "</ul>";
+    }
+
+    const savedAtFormatted = formatDisplayDate(report.createdAt);
+
+    if (reportDetailBody) {
+      reportDetailBody.innerHTML = `
+        <div class="url-verdict-card" data-verdict="${escapeHtml(report.riskLevel || "clean")}">
+          <div class="verdict-header">
+            <div>
+              <p class="verdict-level-kicker">${escapeHtml(badgeLabel)}</p>
+              <h4 class="verdict-title">${escapeHtml(report.verdictTitle || "Security Assessment")}</h4>
+            </div>
+            <span class="verdict-badge">${escapeHtml(badgeLabel)}</span>
+          </div>
+          <p class="verdict-summary">${escapeHtml(report.verdictSummary || "")}</p>
+          <div class="verdict-meta">
+            <span>Saved on: ${escapeHtml(savedAtFormatted)}</span>
+            <span>•</span>
+            <span>${report.findingsCount ?? findings.length} detected indicator${(report.findingsCount ?? findings.length) === 1 ? "" : "s"}</span>
+          </div>
+        </div>
+
+        <div style="margin-top: 16px;">
+          <label style="font-size: 0.8rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--ink-faint);">Redacted Target URL</label>
+          <div class="report-detail-url-box">${escapeHtml(report.redactedUrl || report.url)}</div>
+        </div>
+
+        <div style="margin-top: 18px;">
+          <h4 style="font-size: 0.95rem; margin-bottom: 8px;">Key Structural Facts</h4>
+          <dl class="modal-facts-grid">${factsHtml}</dl>
+        </div>
+
+        <div style="margin-top: 18px;">
+          <h4 style="font-size: 0.95rem; margin-bottom: 4px;">Detailed Findings &amp; Indicators</h4>
+          ${findingsHtml}
+        </div>
+
+        <div class="url-disclaimer-box" style="margin-top: 18px;">
+          <div class="disclaimer-title-row">
+            <svg viewBox="0 0 20 20" fill="none" width="16" height="16" aria-hidden="true">
+              <circle cx="10" cy="10" r="8" stroke="currentColor" stroke-width="1.5" />
+              <path d="M10 9v5m0-8v1.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
+            </svg>
+            <strong>Heuristic Scope &amp; Privacy Notice</strong>
+          </div>
+          <p>
+            This saved report records syntactic properties evaluated locally at scan time. It cannot guarantee a remote server’s safety, absence of malware, or ongoing reputation. Credentials and sensitive parameters were redacted prior to storage.
+          </p>
+        </div>
+      `;
+    }
+
+    if (typeof reportDetailDialog.showModal === "function") {
+      reportDetailDialog.showModal();
+    } else {
+      reportDetailDialog.setAttribute("open", "");
+    }
+  }
+
+  function closeReportModal() {
+    if (reportDetailDialog) {
+      if (typeof reportDetailDialog.close === "function") {
+        reportDetailDialog.close();
+      } else {
+        reportDetailDialog.removeAttribute("open");
+      }
+    }
+    activeModalReport = null;
+  }
+
+  async function deleteReportById(reportId) {
+    if (!reportId) return;
+    const token = sessionStorage.getItem("ciphercheck_token");
+    const headers = window.CipherCheckAuth?.getAuthHeaders() || {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    };
+
+    try {
+      const res = await fetch(`/api/reports/${encodeURIComponent(reportId)}`, {
+        method: "DELETE",
+        headers,
+        credentials: "include",
+      });
+      if (res.ok) {
+        if (activeModalReport && activeModalReport.id === reportId) {
+          closeReportModal();
+        }
+        await loadDashboardData(currentPage);
+      } else {
+        const data = await res.json();
+        alert(data.error || "Failed to delete report.");
+      }
+    } catch (err) {
+      alert("Network error while deleting report.");
+    }
+  }
+
+  // Delegate click events inside reports list
+  if (reportsList) {
+    reportsList.addEventListener("click", (e) => {
+      const inspectBtn = e.target.closest(".inspect-report-btn");
+      if (inspectBtn) {
+        const id = inspectBtn.getAttribute("data-id");
+        const report = cachedReports.find((r) => r.id === id);
+        if (report) {
+          openReportModal(report);
+        }
+        return;
+      }
+
+      const delBtn = e.target.closest(".delete-report-btn");
+      if (delBtn) {
+        const id = delBtn.getAttribute("data-id");
+        deleteReportById(id);
+      }
+    });
+  }
+
+  // Filter chips click
+  filterChips.forEach((chip) => {
+    chip.addEventListener("click", () => {
+      filterChips.forEach((c) => c.classList.remove("active"));
+      chip.classList.add("active");
+      currentRiskFilter = chip.getAttribute("data-risk") || "all";
+      currentPage = 1;
+      loadDashboardData(1);
+    });
+  });
+
+  // Search input debounced
+  if (searchInput) {
+    searchInput.addEventListener("input", (e) => {
+      clearTimeout(searchDebounceTimer);
+      searchDebounceTimer = setTimeout(() => {
+        currentSearchQuery = e.target.value.trim();
+        currentPage = 1;
+        loadDashboardData(1);
+      }, 250);
+    });
+  }
+
+  // Refresh button
+  if (refreshBtn) {
+    refreshBtn.addEventListener("click", () => {
+      loadDashboardData(currentPage);
+    });
+  }
+
+  // Pagination buttons
+  if (prevPageBtn) {
+    prevPageBtn.addEventListener("click", () => {
+      if (currentPage > 1) {
+        loadDashboardData(currentPage - 1);
+      }
+    });
+  }
+  if (nextPageBtn) {
+    nextPageBtn.addEventListener("click", () => {
+      loadDashboardData(currentPage + 1);
+    });
+  }
+
+  // Detail Modal Actions
+  if (reportDetailClose) {
+    reportDetailClose.addEventListener("click", closeReportModal);
+  }
+  if (reportDetailDialog) {
+    reportDetailDialog.addEventListener("click", (e) => {
+      const rect = reportDetailDialog.getBoundingClientRect();
+      const inDialog =
+        rect.top <= e.clientY &&
+        e.clientY <= rect.top + rect.height &&
+        rect.left <= e.clientX &&
+        e.clientX <= rect.left + rect.width;
+      if (!inDialog) {
+        closeReportModal();
+      }
+    });
+  }
+
+  if (copyDetailReportBtn) {
+    copyDetailReportBtn.addEventListener("click", async () => {
+      if (!activeModalReport) return;
+      const text = [
+        `CipherCheck Saved Security Scan Report`,
+        `======================================`,
+        `Hostname: ${activeModalReport.hostname || "Unknown"}`,
+        `Registered Domain: ${activeModalReport.registeredDomain || "Unknown"}`,
+        `Redacted URL: ${activeModalReport.redactedUrl || activeModalReport.url}`,
+        `Recorded Risk: ${getRiskBadgeLabel(activeModalReport.riskLevel)}`,
+        `Date Saved: ${formatDisplayDate(activeModalReport.createdAt)}`,
+        `Verdict: ${activeModalReport.verdictTitle} - ${activeModalReport.verdictSummary}`,
+        ``,
+        `Indicators Detected (${activeModalReport.findingsCount}):`,
+        ...(activeModalReport.analysisData?.findings || []).map(
+          (f, idx) => `${idx + 1}. [${f.severity.toUpperCase()}] ${f.title}\n   ${f.explanation}\n   Why it matters: ${f.whyItMatters}`
+        ),
+      ].join("\n");
+
+      try {
+        if (!navigator.clipboard || !navigator.clipboard.writeText) {
+          throw new Error("Clipboard unavailable");
+        }
+        await navigator.clipboard.writeText(text);
+        if (detailFeedback) {
+          detailFeedback.textContent = "✓ Report copied to clipboard!";
+          setTimeout(() => {
+            if (detailFeedback.textContent.includes("✓ Report copied")) {
+              detailFeedback.textContent = "";
+            }
+          }, 3000);
+        }
+      } catch (_) {
+        if (detailFeedback) {
+          detailFeedback.textContent = "Could not copy automatically.";
+        }
+      }
+    });
+  }
+
+  if (deleteDetailReportBtn) {
+    deleteDetailReportBtn.addEventListener("click", () => {
+      if (!activeModalReport) return;
+      deleteReportById(activeModalReport.id);
+    });
+  }
+
+  // Clear History Modal & Action
+  if (clearHistoryBtn && confirmClearDialog) {
+    clearHistoryBtn.addEventListener("click", () => {
+      if (typeof confirmClearDialog.showModal === "function") {
+        confirmClearDialog.showModal();
+      } else {
+        confirmClearDialog.setAttribute("open", "");
+      }
+    });
+  }
+
+  const closeClearDialog = () => {
+    if (confirmClearDialog) {
+      if (typeof confirmClearDialog.close === "function") {
+        confirmClearDialog.close();
+      } else {
+        confirmClearDialog.removeAttribute("open");
+      }
+    }
+  };
+
+  if (confirmClearClose) confirmClearClose.addEventListener("click", closeClearDialog);
+  if (cancelClearBtn) cancelClearBtn.addEventListener("click", closeClearDialog);
+  if (confirmClearDialog) {
+    confirmClearDialog.addEventListener("click", (e) => {
+      const rect = confirmClearDialog.getBoundingClientRect();
+      const inDialog =
+        rect.top <= e.clientY &&
+        e.clientY <= rect.top + rect.height &&
+        rect.left <= e.clientX &&
+        e.clientX <= rect.left + rect.width;
+      if (!inDialog) {
+        closeClearDialog();
+      }
+    });
+  }
+
+  if (executeClearBtn) {
+    executeClearBtn.addEventListener("click", async () => {
+      executeClearBtn.disabled = true;
+      executeClearBtn.textContent = "Clearing...";
+
+      const token = sessionStorage.getItem("ciphercheck_token");
+      const headers = window.CipherCheckAuth?.getAuthHeaders() || {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      };
+
+      try {
+        const res = await fetch("/api/reports", {
+          method: "DELETE",
+          headers,
+          credentials: "include",
+        });
+
+        if (res.ok) {
+          closeClearDialog();
+          currentPage = 1;
+          await loadDashboardData(1);
+        } else {
+          const data = await res.json();
+          alert(data.error || "Failed to clear history.");
+        }
+      } catch (err) {
+        alert("Connection error while clearing history.");
+      } finally {
+        executeClearBtn.disabled = false;
+        executeClearBtn.textContent = "Yes, Clear All Reports";
+      }
+    });
+  }
+
+  // Guest sign-in button
+  if (dashboardSignInBtn) {
+    dashboardSignInBtn.addEventListener("click", () => {
+      window.CipherCheckAuth?.openAuthModal();
+    });
+  }
+
+  // Listen for auth state change
+  window.addEventListener("ciphercheck:authchange", (e) => {
+    const user = e.detail?.user;
+    if (user) {
+      currentPage = 1;
+      loadDashboardData(1);
+    } else {
+      if (dashboardGuestCard) dashboardGuestCard.style.display = "flex";
+      if (dashboardAuthContent) dashboardAuthContent.style.display = "none";
+      updateSyncTag(false);
+      renderStats({});
+      if (reportsList) reportsList.innerHTML = "";
+    }
+  });
+
+  // Listen for new report saved
+  window.addEventListener("ciphercheck:reportschanged", () => {
+    loadDashboardData(currentPage);
+  });
+}
+
 document.addEventListener("DOMContentLoaded", () => {
   initThemeToggle();
   initAnalyzer();
   initGenerator();
   initAuth();
+  initUrlChecker();
+  initSecurityDashboard();
 });
+
 

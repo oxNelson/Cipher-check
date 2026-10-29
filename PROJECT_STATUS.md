@@ -1,17 +1,20 @@
 # CipherCheck Project Status
 
-**Last Updated:** October 27, 2026  
-**Version:** 1.2.0 (Phase 1 Complete + Phase 2 PostgreSQL Auth & Real SMTP Integration Live)
+**Last Updated:** October 28, 2026  
+**Version:** 1.4.0 (Security Dashboard, Saved Scan History, & Multi-Tool Security Suite Live)
 
 ---
 
 ## 1. Executive Summary
 
-CipherCheck is a privacy-first password security auditor, secure generator, and authentication platform.
+CipherCheck is a privacy-first password security auditor, secure generator, link risk analyzer, security scan history dashboard, and PostgreSQL authentication platform.
 - **Phase 1 (Core Capabilities):** 100% verified. All password analysis, heuristic scoring, weakness detection, and secure password generation run strictly client-side using vanilla HTML5/CSS3/JavaScript and the browser Web Crypto API. Passwords entered in the workbench are never transmitted or stored.
 - **Theme Toggle:** Fully implemented with Light/Dark mode, accessible sun/moon icons, keyboard support, `localStorage` persistence, device `prefers-color-scheme` detection, and zero-flash inline loading.
-- **Phase 2 (Database & PostgreSQL Authentication):** Fully connected to PostgreSQL database with version-controlled migrations (`users` and `sessions` tables with verification and password reset columns). Secure password hashing with bcrypt, session invalidation, and rate limiting.
-- **Phase 3 (SMTP & Email Delivery):** Live and active. SMTP configuration verified via TLS connection to mail server. Registration automatically dispatches real email verification links, and password recovery dispatches reset links.
+- **Phase 2 (Database & PostgreSQL Authentication):** Fully connected to PostgreSQL database with version-controlled migrations (`users`, `sessions`, and `saved_reports` tables). Secure password hashing with bcrypt, session invalidation, and rate limiting.
+- **Phase 3 (SMTP & Email Delivery):** Live and active. SMTP configuration verified via TLS connection to mail server. Registration automatically dispatches real email verification links, and password recovery dispatches reset links with robust host detection.
+- **Phase 4 (Editable User Nicknames):** Authenticated users can set a nickname during registration or edit their nickname anytime via the account panel with client and server-side validation (2–30 chars), database persistence, and fallback to email-derived name.
+- **Phase 5 (Tool 03: URL & Link Risk Checker):** Privacy-first link analysis tool operating 100% in-browser with zero outbound HTTP requests (SSRF prevention). Analyzes structural indicators (unencrypted HTTP, raw IPv4/IPv6 hosts, embedded credential `@` tricks, Punycode IDN homoglyphs, invisible/zero-width Unicode, excessive subdomains, brand impersonation/typosquatting, high-abuse TLDs, non-standard web ports, and percent-encoding anomalies). Disclaims heuristic limitations honestly—never labeling clean URLs "Safe", but rather "No Obvious Red Flags Detected" with clear disclosures.
+- **Phase 6 (Tool 04: Security Dashboard & Saved Scan History):** Authenticated users can opt-in to save URL analysis reports directly to their private dashboard. URL analysis remains strictly client-side on "Analyze Link"—reports are only transmitted upon explicit user click on "Save Report". Pre-save retention notice clearly communicates stored fields. Sensitive authority credentials (`user:pass@`) and sensitive query parameters (`token`, `auth`, `key`, `password`, `session`, `jwt`, `api_key`, `sig`, etc.) are automatically redacted before storage. Strict database-level isolation (`WHERE id = $1 AND user_id = $2`) prevents cross-user access or deletion. Full dashboard provides summary metrics (total saved, clean, low, medium, high), search by host/URL, risk filter chips, paginated browsing, full findings modal inspector, text report export, single-report deletion, and clear-all history with confirmation modal.
 
 ---
 
@@ -60,25 +63,36 @@ CipherCheck is a privacy-first password security auditor, secure generator, and 
 - **Root Cause:**
   1. In the AI Studio editor, preview iframes make frontend API requests with `Origin: https://aistudio.google.com` or `*.googleusercontent.com`.
   2. In `server-smtp.js`, `getBaseUrl(req)` previously evaluated `isOriginAllowed(origin, req)` which allowed `*.google.com` for CORS/iframe compatibility.
-  3. Consequently, `getBaseUrl(req)` selected `https://aistudio.google.com`, constructing reset and verification URLs such as `https://aistudio.google.com/?resetToken=...`.
-  4. When clicked in an external browser or email client, direct requests to `aistudio.google.com` bypassed the applet and reached Google's platform servers, which returned HTTP 403 Forbidden.
-- **Resolution:**
-  1. **Strict Application Host Filtering (`isApplicationHost`):** Added hostname validation in `server-smtp.js` that strictly rejects `localhost`, `127.0.0.1`, `*.google.com`, `*.googleusercontent.com`, and `*.googletagmanager.com`. Only permits valid application deployment hosts (such as `*.run.app` or configured `APP_URL`/`PUBLIC_URL`/`BASE_URL`).
-  2. **Canonical Origin Resolution (`getBaseUrl`):** If the incoming request has a valid application host in `origin` or `referer`, it is used; otherwise it resolves to `process.env.APP_URL` (`https://ais-dev-ok6xmxuezsad5ybcofshmt-220908265023.europe-west2.run.app`). This guarantees `aistudio.google.com` is never used for email links.
-  3. **Identical Link Targets:** Verified that both the "Reset Password" button `href` and the fallback text URL use the exact same `${resetUrl}` variable, with `target="_blank" rel="noopener noreferrer"`.
-  4. **Manual Token Entry Fallback:** In addition to the 1-click link, emails now also display the raw 64-character token code. Added an "Already have a reset code?" button (`#haveResetTokenBtn`) and token input field (`#resetTokenInput`) to `index.html` so users can paste the reset code directly into the UI if desired.
-  5. **Live Verification:** Verified end-to-end against PostgreSQL: user registration, reset email generation, invalid token rejection (400), valid token submission (200), token replay rejection (400), old password login failure (401), and new password login success (200).
+
+### 2.5 Issue 5: URL Risk Checker Classification Accuracy & False Positive Remediation
+- **Bugs Diagnosed:**
+  1. *Naive Substring Brand Impersonation:* Testing `hostname.includes(brand.key)` flagged legitimate dictionary words and domains (`pineapple.com`, `snapple.com`, `purchase.com`, `chasethedream.com`, `steamboatsprings.gov`, `amazonia.org`, `mainstreammedia.com`) as phishing attacks.
+  2. *False Positive on Path and Query `@` Symbols:* Testing `trimmed.includes("@")` incorrectly flagged legitimate social media handles (e.g., `https://www.youtube.com/@veritasium`, `https://medium.com/@author`) and search query parameters containing email addresses (`https://example.com/search?user=admin@company.com`) as High Risk Deceptive Embedded Authority attacks.
+  3. *False Positive on Legitimate Query Percent-Encoding:* Scanning `trimmed` for `%25` or `%2f` flagged search queries containing percent signs (e.g. `?q=50%25+off`) and standard OAuth redirect URLs (e.g. `?redirect_uri=https%3A%2F%2Fapp.com%2Fcallback`) as character encoding obfuscation attacks.
+  4. *FQDN Trailing Dot Splitting:* Fully Qualified Domain Names ending in a root dot (`example.com.`) produced an empty trailing array element when split on `.`, causing registered domain extraction to misidentify the domain as `"com."`.
+- **Fixes Applied:**
+  1. *Token Boundary & Compound Analysis (`checkBrandToken`):* Replaced substring matching with delimited token extraction (`/[-_]+/`). Evaluates discrete brand tokens, compound pairings with account/security keywords (`paypallogin`, `applesupport`, `chaseonline`), and leetspeak typosquatting substitutions (`paypa1`, `g00gle`). Validated against `https://www.wikipedia.org` and `https://www.wikipedia.org/wiki/Apple_Inc.`.
+  2. *Authority-Scoped `@` Trick Verification:* Isolated the authority component before the host (`authorityPart.includes("@")` or `parsed.username || parsed.password`). Legitimate `@` in paths or query strings are ignored, while true authority tricks (`https://brand.com:pass@attacker.com/auth`) are accurately flagged as high severity.
+  3. *Contextual Encoding Obfuscation Analysis:* Restructured encoding checks to specifically flag: (a) null byte injection sequences (`%00`) anywhere, (b) percent-encoded slashes/dots in the path (`/%2f`, `/%2e%2e/`), (c) percent-encoded characters in the hostname, and (d) path traversal sequences in query strings (`..%2f`, `%2e%2e`). Cleaned queries with `%25` and encoded redirect parameters pass cleanly.
+  4. *FQDN Trailing Dot Normalization & Expanded ccTLDs:* Added `hostname.toLowerCase().replace(/\.+$/, "")` to `extractDomainParts` and expanded two-level ccTLDs to cover international registries (.hk, .kr, .my, .tw, .ar, .co, .id, .tr, .vn, .il, etc.).
+  5. *Dedicated Deceptive Subdomain Heuristic (`embedded-tld-subdomain`):* Detects when a subdomain hierarchy incorporates TLD labels (e.g. `apple.com.evil-site.net`), providing clear observable explanations of the visual deception.
 
 ---
 
 ## 3. Database Schema & Migration Status
 
 Database: PostgreSQL (Neon) via `pg.Pool`  
+Migrations:
+- `lib/db/migrations/0000_create_auth_tables.sql` (Users and Sessions)
+- `lib/db/migrations/0001_add_nickname.sql` (Nickname column on Users)
+- `lib/db/migrations/0002_create_saved_reports.sql` (Saved Scan Reports table and indexes)
+
 Tables:
 - `users`:
   - `id`: varchar (UUID) primary key
   - `email`: varchar unique, indexed
   - `password_hash`: varchar (bcrypt cost factor 12)
+  - `nickname`: varchar(30) nullable
   - `is_verified`: boolean (default false)
   - `email_verification_token`: varchar (hex)
   - `email_verification_expires`: timestamptz
@@ -89,6 +103,19 @@ Tables:
   - `id`: varchar (64-char hex) primary key
   - `user_id`: varchar foreign key references `users(id)` ON DELETE CASCADE
   - `created_at`, `last_active_at`, `expires_at`: timestamptz
+- `saved_reports`:
+  - `id`: varchar (UUID) primary key
+  - `user_id`: varchar foreign key references `users(id)` ON DELETE CASCADE, indexed
+  - `url`: text not null (redacted URL)
+  - `redacted_url`: text not null
+  - `hostname`: varchar(255) not null, indexed
+  - `registered_domain`: varchar(255) not null
+  - `risk_level`: varchar(32) not null, indexed
+  - `verdict_title`: varchar(255) not null
+  - `verdict_summary`: text not null
+  - `findings_count`: integer not null default 0
+  - `analysis_data`: jsonb not null (sanitized findings, facts, structural components)
+  - `created_at`: timestamptz not null default now(), indexed
 
 ---
 
@@ -118,7 +145,12 @@ TAP version 13
     ok 17 - getBaseUrl strips trailing slashes to avoid double-slash URLs
     ok 18 - getBaseUrl strictly rejects aistudio.google.com origin and resolves to APP_URL
     ok 19 - getBaseUrl strictly rejects googleusercontent.com iframe origin
-ok 1 - Phase 2: Authentication & Security Foundation (19/19 passed)
+    ok 20 - User registration with optional nickname persists nickname accurately
+    ok 21 - User registration without nickname defaults nickname to null
+    ok 22 - updateUserNickname modifies nickname and reflects in findSession
+    ok 23 - updateUserNickname validates length and rejects invalid inputs
+    ok 24 - Nickname user isolation: updating User A does not modify User B
+ok 1 - Phase 2: Authentication & Security Foundation (24/24 passed)
 
 # Subtest: CipherCheck Core Password Analyzer
     ok 1 - Length scoring follows documented rules
@@ -138,14 +170,77 @@ ok 2 - CipherCheck Core Password Analyzer (8/8 passed)
     ok 4 - Rejects empty categories
 ok 3 - CipherCheck Secure Password Generator (4/4 passed)
 
+# Subtest: Phase 4: Security Dashboard & Saved Scan History
+    # Subtest: URL & Credential Redaction
+        ok 1 - redactSensitiveUrl removes authority credentials
+        ok 2 - redactSensitiveUrl redacts sensitive query parameters
+        ok 3 - redactSensitiveUrl preserves benign query params and paths
+        ok 4 - redactSensitiveUrl handles schemeless and malformed inputs gracefully
+    ok 1 - URL & Credential Redaction (4/4 passed)
+    # Subtest: Report Persistence & Isolation
+        ok 1 - saveReport saves analysis and populates metadata correctly
+        ok 2 - saveReport saves additional clean report for User A
+        ok 3 - saveReport saves report for User B
+        ok 4 - Strict Isolation: User B cannot see or access User A's reports
+        ok 5 - Strict Isolation: User B cannot delete User A's report
+        ok 6 - Dashboard statistics calculation
+        ok 7 - Filtering by risk level
+        ok 8 - Search filtering by hostname and URL
+        ok 9 - Pagination bounds and limits
+        ok 10 - Delete single report removes only targeted report
+        ok 11 - Clear all reports for User A clears only User A and leaves User B unaffected
+    ok 2 - Report Persistence & Isolation (11/11 passed)
+    # Subtest: HTTP API Endpoints & Authorization
+        ok 1 - Unauthenticated requests to /api/reports are rejected with 401
+        ok 2 - POST /api/reports rejects invalid or missing analysis with 400
+        ok 3 - POST /api/reports creates report and returns 201 with redacted URL
+        ok 4 - GET /api/reports retrieves user reports and accurate stats
+        ok 5 - GET /api/reports/:id allows author to inspect findings
+        ok 6 - GET /api/reports/:id isolates reports: User B cannot access User A's report
+        ok 7 - DELETE /api/reports/:id isolates reports: User B cannot delete User A's report
+        ok 8 - DELETE /api/reports/:id allows author to delete own report
+    ok 3 - HTTP API Endpoints & Authorization (8/8 passed)
+ok 4 - Phase 4: Security Dashboard & Saved Scan History (23/23 passed)
+
 # Subtest: Theme Toggle & Persistence
     ok 1 - Applies theme and updates DOM attributes and localStorage
-ok 4 - Theme Toggle & Persistence (1/1 passed)
+ok 5 - Theme Toggle & Persistence (1/1 passed)
 
-1..4
-# tests 32
-# suites 4
-# pass 32
+# Subtest: CipherCheck URL & Link Risk Checker
+    ok 1 - Rejects empty or whitespace-only inputs with helpful errors
+    ok 2 - Gracefully handles and rejects malformed unparseable URLs
+    ok 3 - Infers scheme when URL is entered without protocol prefix
+    ok 4 - HTTPS clean URLs receive No Obvious Red Flags verdict without claiming absolute safety
+    ok 5 - Detects unencrypted HTTP protocol as a warning finding
+    ok 6 - Detects raw IPv4 address used as host
+    ok 7 - Detects raw IPv6 bracketed address used as host
+    ok 8 - Detects deceptive embedded authority (@ symbol credential trick)
+    ok 9 - Detects Punycode (IDN) domains commonly used in homoglyph attacks
+    ok 10 - Detects invisible, zero-width, or control characters as high risk
+    ok 11 - Detects excessive subdomain nesting used to disguise destination
+    ok 12 - Detects brand impersonation in unauthorized domains
+    ok 13 - Avoids false-positive brand impersonation on official domains
+    ok 14 - Detects high-abuse or file-extension top-level domains
+    ok 15 - Detects non-standard web ports
+    ok 16 - Detects suspicious percent-encoding obfuscation
+    ok 17 - Detects dangerous pseudo-protocols like javascript: and data: as high risk
+    ok 18 - extractDomainParts correctly splits standard and two-level ccTLDs
+    ok 19 - formatUrlReport formats complete copyable report with all sections
+    ok 20 - Regression: Avoids false positives on legitimate words containing brand substrings
+    ok 21 - Regression: Accurately detects brand impersonation across subdomains, compound words, and leetspeak
+    ok 22 - Regression: Detects deceptive TLD embedded inside subdomain hierarchy
+    ok 23 - Regression: Correctly parses registered domain with trailing FQDN dot and international ccTLDs
+    ok 24 - Regression: Findings and disclaimers strictly distinguish observable indicators from confirmed malice
+    ok 25 - Final Validation: Wikipedia and paths containing brand names are not flagged as impersonation
+    ok 26 - Final Validation: True authority @ tricks are flagged, but @ in paths and queries are not
+    ok 27 - Final Validation: Percent-encoding checks catch path traversal and null bytes without false-positive queries
+    ok 28 - Final Validation: Brand impersonation in deceptive subdomain with embedded TLD
+ok 6 - CipherCheck URL & Link Risk Checker (28/28 passed)
+
+1..6
+# tests 88
+# suites 9
+# pass 88
 # fail 0
 # cancelled 0
 # skipped 0
@@ -162,9 +257,29 @@ ok 4 - Theme Toggle & Persistence (1/1 passed)
 | 2 | Session Generation & Invalidation | **PASS** | 256-bit cryptographically secure token; old sessions destroyed on login to prevent fixation; deleted on logout. |
 | 3 | Cookie & Token Security | **PASS** | `HttpOnly; SameSite=Lax; Path=/`; dynamically appends `; Secure` on HTTPS and in production. Bearer tokens supported for partitioned iframe storage. |
 | 4 | Rate Limiting & Input Validation | **PASS** | 5 failed attempts per 60s per IP (HTTP 429); strict email and password validation (HTTP 400). |
-| 5 | User Isolation | **PASS** | Authenticated endpoints strictly scope data to session user ID; unauthenticated requests reject with 401/403. |
-| 6 | CSRF & Origin Defense | **PASS** | Origin validation allows preview and production domains while blocking unauthorized origins on state-changing requests. |
+| 5 | User Isolation & Nickname Protection | **PASS** | Authenticated endpoints strictly scope data to session user ID; unauthenticated requests reject with 401/403; cross-user nickname updates prohibited. |
+| 6 | CSRF & Origin Defense | **PASS** | Origin validation allows preview and production domains while blocking unauthorized origins on state-changing requests (`/api/auth` and `/api/reports`). |
 | 7 | SQL Injection Defense & Secret Protection | **PASS** | 100% parameterized queries ($1, $2, ...); credentials never transmitted to client or committed. |
 | 8 | SMTP Integration & Integrity | **PASS** | Real SMTP transport over TLS with `nodemailer`; verified server authentication; active verification and reset tokens. |
 | 9 | Client-Side Password Processing | **PASS** | Analyzer workbench and generator run purely synchronously in-browser with zero outbound network calls. |
-| 10 | Production Readiness Documentation | **PASS** | Required environment variables (`DATABASE_URL`, `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`) and migrations documented. |
+| 10 | URL Risk Checker Privacy & SSRF Immunity | **PASS** | Zero outbound HTTP fetches, DNS lookups, or pings. Analyzes static structure strictly in browser memory without auto-saving. |
+| 11 | Honest Risk Disclosures (Anti-False-Safety) | **PASS** | URLs with 0 findings explicitly state "No Obvious Red Flags Detected" with disclosures that absence of indicators != verified safe. No fake reputation or malware scanning claimed. |
+| 12 | Saved Reports Explicit Opt-In & Privacy | **PASS** | Reports are saved only upon explicit user click on "Save Report". Pre-save retention notice explains stored fields. |
+| 13 | URL Redaction & Credential Stripping | **PASS** | Authority credentials (`user:pass@`) and sensitive query parameters (`token`, `auth`, `key`, `password`, `session`, `jwt`, `api_key`, `sig`, etc.) are automatically sanitized with `[REDACTED]` prior to DB insertion. |
+| 14 | Cross-User Report Isolation & Access Control | **PASS** | Queries explicitly bind `user_id = $1` to session user ID. User A cannot view, inspect, or delete User B's reports. |
+| 15 | Deletion & History Integrity | **PASS** | Deleting individual reports or clearing history permanently deletes records without touching user credentials or session tables. |
+
+---
+
+## 6. Known Limitations & Architectural Boundary
+
+1. **Static Local Analysis vs. Live Threat Intelligence:**
+   - The URL Risk Checker intentionally operates **100% locally within the browser** without querying external reputation APIs, blocklists, or domain databases. This design ensures absolute user privacy and zero SSRF risk.
+   - Consequently, the checker cannot detect whether an otherwise clean, newly registered domain or compromised legitimate server currently serves zero-day malware or dynamic phishing kits.
+2. **Dynamic Client-Side Redirects:**
+   - Heuristics evaluate the URL structure itself. JavaScript-based redirect chains executed inside an HTML document upon visiting cannot be inspected statically without fetching and executing page contents.
+3. **Punycode (IDN) vs. Legitimate International Sites:**
+   - Punycode domains (`xn--...`) are flagged with a low-severity advisory because homoglyph attacks rely on IDNs. However, legitimate non-Latin websites also use IDNs. The tool deliberately explains this context rather than categorizing all IDNs as malicious.
+4. **Historical Assessment Immutability:**
+   - Saved reports capture the evaluation and syntactic findings as observed at the time of the scan. They are not continuously re-evaluated or mutated automatically, preserving an accurate audit log of user scans.
+

@@ -387,3 +387,319 @@ export function serializeClearedCookie(isSecure = false) {
   return `session_id=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${secureFlag}`;
 }
 
+// ============================================================================
+// Saved Security Scan Reports Store & Redaction
+// ============================================================================
+
+const SENSITIVE_PARAM_KEYS = new Set([
+  "token", "auth", "key", "password", "pass", "pwd", "api_key", "apikey",
+  "secret", "access_token", "refresh_token", "session", "session_id", "sessionid",
+  "code", "sig", "signature", "bearer", "jwt", "credential", "private", "pin"
+]);
+
+export function redactSensitiveUrl(rawUrl) {
+  if (typeof rawUrl !== "string") return "";
+  try {
+    const hasScheme = /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(rawUrl);
+    const parsed = new URL(hasScheme ? rawUrl : "http://" + rawUrl);
+    // 1. Strip/redact authority credentials
+    if (parsed.username || parsed.password) {
+      parsed.username = "[REDACTED]";
+      parsed.password = "";
+    }
+
+    // 2. Redact sensitive query parameters
+    const params = new URLSearchParams(parsed.search);
+    for (const [key, value] of Array.from(params.entries())) {
+      const lowerKey = key.toLowerCase();
+      const isSensitiveKey =
+        SENSITIVE_PARAM_KEYS.has(lowerKey) ||
+        Array.from(SENSITIVE_PARAM_KEYS).some((k) => lowerKey.includes(k));
+      const isHighEntropy = value.length >= 24 && /^[a-zA-Z0-9_\-]+$/.test(value);
+
+      if (isSensitiveKey || isHighEntropy) {
+        params.set(key, "[REDACTED]");
+      }
+    }
+    let searchStr = params.toString();
+    if (searchStr) {
+      searchStr = searchStr.replace(/%5BREDACTED%5D/gi, "[REDACTED]");
+      parsed.search = "?" + searchStr;
+    } else {
+      parsed.search = "";
+    }
+    let res = parsed.toString().replace(/%5BREDACTED%5D/gi, "[REDACTED]");
+    if (!hasScheme && res.startsWith("http://")) {
+      res = res.slice(7);
+    }
+    return res;
+  } catch (_) {
+    return rawUrl.replace(/:[^@]+@/, ":[REDACTED]@");
+  }
+}
+
+const memorySavedReports = new Map(); // id -> reportRecord
+
+export async function saveReport(userId, analysisData) {
+  if (!userId) {
+    throw new Error("User ID is required to save a report.");
+  }
+  if (!analysisData || typeof analysisData !== "object" || !analysisData.urlParts) {
+    throw new Error("Valid analysis data is required.");
+  }
+
+  const id = crypto.randomUUID();
+  const rawUrl = String(analysisData.rawInput || "");
+  const redactedUrl = redactSensitiveUrl(rawUrl);
+  const hostname = String(analysisData.urlParts.hostname || "");
+  const registeredDomain = String(analysisData.urlParts.registeredDomain || hostname);
+  const riskLevel = String(analysisData.verdict?.level || "low").toLowerCase();
+  const verdictTitle = String(analysisData.verdict?.title || "Security Assessment");
+  const verdictSummary = String(analysisData.verdict?.summary || "");
+  const findingsCount = Array.isArray(analysisData.findings) ? analysisData.findings.length : 0;
+  const createdAt = new Date();
+
+  // Create sanitized analysis data copy with redacted URLs to ensure sensitive data is not kept in jsonb
+  const sanitizedAnalysisData = {
+    ...analysisData,
+    rawInput: redactedUrl,
+    normalizedUrl: redactSensitiveUrl(analysisData.normalizedUrl || rawUrl),
+    facts: Array.isArray(analysisData.facts)
+      ? analysisData.facts.map((f) => {
+          if (f.label === "Query Parameters" && f.value && f.value !== "(none)") {
+            return { ...f, value: redactSensitiveUrl("http://example.com" + f.value).replace("http://example.com", "") };
+          }
+          return f;
+        })
+      : [],
+  };
+
+  if (isPostgresReady && pgPool) {
+    const res = await pgPool.query(
+      `INSERT INTO saved_reports 
+        (id, user_id, url, redacted_url, hostname, registered_domain, risk_level, verdict_title, verdict_summary, findings_count, analysis_data, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+       RETURNING id, user_id as "userId", url, redacted_url as "redactedUrl", hostname, registered_domain as "registeredDomain",
+                 risk_level as "riskLevel", verdict_title as "verdictTitle", verdict_summary as "verdictSummary",
+                 findings_count as "findingsCount", analysis_data as "analysisData", created_at as "createdAt"`,
+      [
+        id,
+        String(userId),
+        redactedUrl, // Store redactedUrl as URL to protect privacy in DB
+        redactedUrl,
+        hostname,
+        registeredDomain,
+        riskLevel,
+        verdictTitle,
+        verdictSummary,
+        findingsCount,
+        JSON.stringify(sanitizedAnalysisData),
+        createdAt,
+      ]
+    );
+    return res.rows[0];
+  }
+
+  const record = {
+    id,
+    userId: String(userId),
+    url: redactedUrl,
+    redactedUrl,
+    hostname,
+    registeredDomain,
+    riskLevel,
+    verdictTitle,
+    verdictSummary,
+    findingsCount,
+    analysisData: sanitizedAnalysisData,
+    createdAt,
+  };
+  memorySavedReports.set(id, record);
+  return record;
+}
+
+export async function getSavedReports(userId, options = {}) {
+  const uid = String(userId || "");
+  const limit = Math.max(1, Math.min(50, Number(options.limit) || 20));
+  const offset = Math.max(0, Number(options.offset) || 0);
+  const riskFilter = options.riskLevel && options.riskLevel !== "all" ? String(options.riskLevel).toLowerCase() : null;
+  const search = options.search && typeof options.search === "string" ? options.search.trim().toLowerCase() : null;
+
+  if (isPostgresReady && pgPool) {
+    // 1. Get stats
+    const statsRes = await pgPool.query(
+      `SELECT 
+        COUNT(*)::int as total,
+        COUNT(CASE WHEN risk_level = 'clean' THEN 1 END)::int as clean,
+        COUNT(CASE WHEN risk_level = 'low' THEN 1 END)::int as low,
+        COUNT(CASE WHEN risk_level = 'medium' THEN 1 END)::int as medium,
+        COUNT(CASE WHEN risk_level = 'high' THEN 1 END)::int as high
+       FROM saved_reports WHERE user_id = $1`,
+      [uid]
+    );
+    const rawStats = statsRes.rows[0] || { total: 0, clean: 0, low: 0, medium: 0, high: 0 };
+    const stats = {
+      total: Number(rawStats.total || 0),
+      clean: Number(rawStats.clean || 0),
+      low: Number(rawStats.low || 0),
+      medium: Number(rawStats.medium || 0),
+      high: Number(rawStats.high || 0),
+      byRisk: {
+        clean: Number(rawStats.clean || 0),
+        low: Number(rawStats.low || 0),
+        medium: Number(rawStats.medium || 0),
+        high: Number(rawStats.high || 0),
+      },
+    };
+
+    // 2. Query filtered reports
+    const params = [uid];
+    const whereClauses = ["user_id = $1"];
+
+    if (riskFilter) {
+      params.push(riskFilter);
+      whereClauses.push(`risk_level = $${params.length}`);
+    }
+
+    if (search) {
+      params.push(`%${search}%`);
+      const pIdx = params.length;
+      whereClauses.push(`(LOWER(hostname) LIKE $${pIdx} OR LOWER(redacted_url) LIKE $${pIdx} OR LOWER(registered_domain) LIKE $${pIdx})`);
+    }
+
+    const whereSql = whereClauses.join(" AND ");
+
+    // Total count for current filter
+    const countRes = await pgPool.query(`SELECT COUNT(*)::int as count FROM saved_reports WHERE ${whereSql}`, params);
+    const totalMatching = countRes.rows[0]?.count || 0;
+
+    // Reports list
+    const queryParams = [...params, limit, offset];
+    const listRes = await pgPool.query(
+      `SELECT id, user_id as "userId", url, redacted_url as "redactedUrl", hostname, registered_domain as "registeredDomain",
+              risk_level as "riskLevel", verdict_title as "verdictTitle", verdict_summary as "verdictSummary",
+              findings_count as "findingsCount", analysis_data as "analysisData", created_at as "createdAt"
+       FROM saved_reports
+       WHERE ${whereSql}
+       ORDER BY created_at DESC
+       LIMIT $${queryParams.length - 1} OFFSET $${queryParams.length}`,
+      queryParams
+    );
+
+    return {
+      reports: listRes.rows,
+      total: totalMatching,
+      limit,
+      offset,
+      pagination: {
+        total: totalMatching,
+        limit,
+        offset,
+      },
+      stats,
+    };
+  }
+
+  // In-memory fallback
+  const userReports = Array.from(memorySavedReports.values()).filter((r) => r.userId === uid);
+
+  const stats = {
+    total: userReports.length,
+    clean: userReports.filter((r) => r.riskLevel === "clean").length,
+    low: userReports.filter((r) => r.riskLevel === "low").length,
+    medium: userReports.filter((r) => r.riskLevel === "medium").length,
+    high: userReports.filter((r) => r.riskLevel === "high").length,
+    byRisk: {
+      clean: userReports.filter((r) => r.riskLevel === "clean").length,
+      low: userReports.filter((r) => r.riskLevel === "low").length,
+      medium: userReports.filter((r) => r.riskLevel === "medium").length,
+      high: userReports.filter((r) => r.riskLevel === "high").length,
+    },
+  };
+
+  let filtered = userReports;
+  if (riskFilter) {
+    filtered = filtered.filter((r) => r.riskLevel === riskFilter);
+  }
+  if (search) {
+    filtered = filtered.filter(
+      (r) =>
+        r.hostname.toLowerCase().includes(search) ||
+        r.redactedUrl.toLowerCase().includes(search) ||
+        r.registeredDomain.toLowerCase().includes(search)
+    );
+  }
+
+  filtered.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  const pageReports = filtered.slice(offset, offset + limit);
+
+  return {
+    reports: pageReports,
+    total: filtered.length,
+    limit,
+    offset,
+    pagination: {
+      total: filtered.length,
+      limit,
+      offset,
+    },
+    stats,
+  };
+}
+
+export async function getSavedReportById(reportId, userId) {
+  if (!reportId || !userId) return null;
+  const uid = String(userId);
+
+  if (isPostgresReady && pgPool) {
+    const res = await pgPool.query(
+      `SELECT id, user_id as "userId", url, redacted_url as "redactedUrl", hostname, registered_domain as "registeredDomain",
+              risk_level as "riskLevel", verdict_title as "verdictTitle", verdict_summary as "verdictSummary",
+              findings_count as "findingsCount", analysis_data as "analysisData", created_at as "createdAt"
+       FROM saved_reports
+       WHERE id = $1 AND user_id = $2
+       LIMIT 1`,
+      [String(reportId), uid]
+    );
+    return res.rows[0] || null;
+  }
+
+  const record = memorySavedReports.get(String(reportId));
+  if (!record || record.userId !== uid) return null;
+  return record;
+}
+
+export async function deleteSavedReport(reportId, userId) {
+  if (!reportId || !userId) return false;
+  const uid = String(userId);
+
+  if (isPostgresReady && pgPool) {
+    const res = await pgPool.query("DELETE FROM saved_reports WHERE id = $1 AND user_id = $2", [String(reportId), uid]);
+    return res.rowCount > 0;
+  }
+
+  const record = memorySavedReports.get(String(reportId));
+  if (!record || record.userId !== uid) return false;
+  memorySavedReports.delete(String(reportId));
+  return true;
+}
+
+export async function clearAllSavedReports(userId) {
+  if (!userId) return 0;
+  const uid = String(userId);
+
+  if (isPostgresReady && pgPool) {
+    const res = await pgPool.query("DELETE FROM saved_reports WHERE user_id = $1", [uid]);
+    return res.rowCount || 0;
+  }
+
+  let count = 0;
+  for (const [id, record] of Array.from(memorySavedReports.entries())) {
+    if (record.userId === uid) {
+      memorySavedReports.delete(id);
+      count++;
+    }
+  }
+  return count;
+}
+

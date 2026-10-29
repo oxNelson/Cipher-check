@@ -313,6 +313,245 @@
               Generated with the browser’s Web Crypto API. Each selected character type is included.
             </p>
           </section>
+
+          <!-- Tool 03 / Inspect: URL & Link Risk Checker -->
+          <section class="panel url-panel" id="urlPanel" aria-labelledby="url-panel-title">
+            <div class="panel-heading">
+              <div>
+                <p class="panel-kicker">03 / Inspect</p>
+                <h2 id="url-panel-title">Link &amp; URL risk checker</h2>
+              </div>
+              <span class="local-tag">LOCAL ONLY</span>
+            </div>
+
+            <div id="urlCheckerForm" role="group" aria-label="URL and link risk analysis">
+              <label class="field-label" for="urlInput">Enter or paste a web address (URL)</label>
+              <div class="url-entry">
+                <input
+                  id="urlInput"
+                  name="url"
+                  type="text"
+                  autocomplete="off"
+                  autocapitalize="off"
+                  spellcheck="false"
+                  placeholder="https://example.com/login"
+                  aria-describedby="urlHint"
+                  data-testid="input-url"
+                />
+                <button class="button button-primary analyze-url-button" id="analyzeUrlButton" type="button" data-testid="button-analyze-url">
+                  Analyze Link
+                  <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
+                    <path d="M4 10h11m-4.5-4.5L15 10l-4.5 4.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+                  </svg>
+                </button>
+              </div>
+              <p class="field-hint" id="urlHint">Evaluated locally in this browser. CipherCheck never visits, fetches, or contacts the submitted link.</p>
+            </div>
+
+            <div class="url-samples-row" aria-label="Sample test links">
+              <span class="samples-label">Quick test:</span>
+              <button class="sample-url-btn" type="button" data-sample="https://github.com/torvalds/linux">Clean HTTPS</button>
+              <button class="sample-url-btn" type="button" data-sample="http://192.168.1.100/admin">IP Host (HTTP)</button>
+              <button class="sample-url-btn" type="button" data-sample="https://paypal.com.verify-account.attacker.xyz/login">Subdomain Phishing</button>
+              <button class="sample-url-btn" type="button" data-sample="https://apple.com@evil-site.net/auth">@ Authority Trick</button>
+              <button class="sample-url-btn" type="button" data-sample="https://xn--pple-43d.com">Punycode</button>
+            </div>
+
+            <p class="auth-status" id="urlErrorStatus" role="alert" aria-live="polite" style="display: none;"></p>
+
+            <div class="url-results" id="urlResults" hidden aria-live="polite">
+              <div class="url-verdict-card" id="urlVerdictCard" data-verdict="clean">
+                <div class="url-verdict-header">
+                  <div class="url-verdict-badge-wrap">
+                    <span class="url-verdict-indicator" id="urlVerdictIndicator" aria-hidden="true"></span>
+                    <h3 id="urlVerdictTitle">No Obvious Red Flags Detected</h3>
+                  </div>
+                  <span class="url-finding-count" id="urlFindingCount">0 indicators detected</span>
+                </div>
+                <p class="url-verdict-summary" id="urlVerdictSummary">No suspicious structural patterns detected in the checks performed.</p>
+              </div>
+
+              <div class="url-facts-section">
+                <h4 class="section-subheading">Observed Structural Facts</h4>
+                <dl class="url-facts-grid" id="urlFactsGrid" aria-label="Observed URL facts">
+                  <!-- Dynamically populated -->
+                </dl>
+              </div>
+
+              <div class="url-findings-section" id="urlFindingsSection">
+                <div class="findings-heading">
+                  <h4>Detected Structural Indicators</h4>
+                  <span id="urlFindingsCounter">0 findings</span>
+                </div>
+                <ul class="url-findings-list" id="urlFindingsList">
+                  <!-- Dynamically populated -->
+                </ul>
+              </div>
+
+              <div class="url-actions-row">
+                <button class="button button-sm button-secondary" id="copyUrlReportBtn" type="button" data-testid="button-copy-url-report">
+                  <svg viewBox="0 0 20 20" fill="none" width="16" height="16" aria-hidden="true">
+                    <rect x="7" y="7" width="9" height="9" rx="1.5" stroke="currentColor" stroke-width="1.5" />
+                    <path d="M4 13V4.5A1.5 1.5 0 0 1 5.5 3H14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
+                  </svg>
+                  <span id="copyUrlReportLabel">Copy Analysis Report</span>
+                </button>
+                <button class="button button-sm button-primary" id="saveUrlReportBtn" type="button" data-testid="button-save-url-report">
+                  <svg viewBox="0 0 20 20" fill="none" width="16" height="16" aria-hidden="true">
+                    <path d="M4 3h12a1 1 0 0 1 1 1v13l-7-3.5L3 17V4a1 1 0 0 1 1-1Z" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+                  </svg>
+                  <span id="saveUrlReportLabel">Save Report</span>
+                </button>
+                <span class="copy-feedback-msg" id="copyUrlFeedback" aria-live="polite"></span>
+              </div>
+
+              <!-- Pre-save data retention disclosure -->
+              <div class="url-retention-notice">
+                <span class="retention-icon" aria-hidden="true">ℹ️</span>
+                <p>
+                  <strong>What will be retained:</strong> Saving stores this analysis in your private dashboard. The destination host, registered domain, path, and detected security indicators are saved. Sensitive query parameters (tokens, passwords, keys) and authority credentials are automatically redacted before storage.
+                </p>
+              </div>
+
+              <div class="url-disclaimer-box">
+                <div class="disclaimer-title-row">
+                  <svg viewBox="0 0 20 20" fill="none" width="16" height="16" aria-hidden="true">
+                    <circle cx="10" cy="10" r="8" stroke="currentColor" stroke-width="1.5" />
+                    <path d="M10 9v5m0-8v1.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
+                  </svg>
+                  <strong>Heuristic Scope &amp; Limitations</strong>
+                </div>
+                <p>
+                  This assessment evaluates only the syntactic and structural characteristics of the submitted link text locally in your browser.
+                  It <em>cannot</em> determine whether a server hosts malicious files, executes exploit kits, or has been compromised.
+                  HTTPS encrypts transit but does not prove authenticity. The absence of red flags does not guarantee safety.
+                </p>
+              </div>
+            </div>
+          </section>
+
+          <!-- Tool 04 / Dashboard: Security Scan History & Metrics -->
+          <section class="panel dashboard-panel" id="dashboardPanel" aria-labelledby="dashboard-title">
+            <div class="panel-heading">
+              <div>
+                <p class="panel-kicker">04 / History</p>
+                <h2 id="dashboard-title">Security scan dashboard</h2>
+              </div>
+              <span class="local-tag" id="dashboardSyncTag">ACCOUNT SYNCED</span>
+            </div>
+
+            <!-- Guest State: Shown when user is not signed in -->
+            <div class="dashboard-guest-card" id="dashboardGuestCard" style="display: none;">
+              <div class="guest-card-body">
+                <div class="guest-icon-badge" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="none" width="24" height="24">
+                    <rect x="3" y="11" width="18" height="11" rx="2" stroke="currentColor" stroke-width="1.7"/>
+                    <path d="M7 11V7a5 5 0 0 1 10 0v4" stroke="currentColor" stroke-width="1.7"/>
+                  </svg>
+                </div>
+                <div>
+                  <h3>Private Security Scan History</h3>
+                  <p>Sign in or create an account to save, search, and review your URL analysis reports across sessions. All reports remain strictly private to your account.</p>
+                </div>
+              </div>
+              <button class="button button-sm button-primary" id="dashboardSignInBtn" type="button" data-testid="button-dashboard-signin">
+                Sign In / Register
+              </button>
+            </div>
+
+            <!-- Authenticated Dashboard View -->
+            <div class="dashboard-auth-content" id="dashboardAuthContent">
+              <!-- Summary Statistics Grid -->
+              <div class="dashboard-stats-grid" id="dashboardStatsGrid">
+                <div class="stat-card" data-stat="total">
+                  <span class="stat-label">Total Saved</span>
+                  <span class="stat-value" id="statTotalReports">0</span>
+                  <span class="stat-sub">Saved scans</span>
+                </div>
+                <div class="stat-card" data-stat="clean">
+                  <span class="stat-label">No Red Flags</span>
+                  <span class="stat-value" id="statCleanReports">0</span>
+                  <span class="stat-sub">Clean structure</span>
+                </div>
+                <div class="stat-card" data-stat="low">
+                  <span class="stat-label">Low Concern</span>
+                  <span class="stat-value" id="statLowReports">0</span>
+                  <span class="stat-sub">Minor anomalies</span>
+                </div>
+                <div class="stat-card" data-stat="medium">
+                  <span class="stat-label">Elevated Caution</span>
+                  <span class="stat-value" id="statMediumReports">0</span>
+                  <span class="stat-sub">Warning flags</span>
+                </div>
+                <div class="stat-card" data-stat="high">
+                  <span class="stat-label">High Risk</span>
+                  <span class="stat-value" id="statHighReports">0</span>
+                  <span class="stat-sub">Deceptive patterns</span>
+                </div>
+              </div>
+
+              <!-- Controls Bar: Filter, Search, Refresh, Clear All -->
+              <div class="dashboard-controls-bar">
+                <div class="dashboard-search-wrap">
+                  <input
+                    id="dashboardSearchInput"
+                    class="dashboard-search-input"
+                    type="text"
+                    placeholder="Search by host or URL..."
+                    aria-label="Search saved reports"
+                    autocomplete="off"
+                    data-testid="input-dashboard-search"
+                  />
+                </div>
+                <div class="dashboard-filter-group" role="group" aria-label="Filter reports by risk level">
+                  <button class="filter-chip active" type="button" data-risk="all">All</button>
+                  <button class="filter-chip" type="button" data-risk="clean">No Flags</button>
+                  <button class="filter-chip" type="button" data-risk="low">Low</button>
+                  <button class="filter-chip" type="button" data-risk="medium">Medium</button>
+                  <button class="filter-chip" type="button" data-risk="high">High</button>
+                </div>
+                <div class="dashboard-actions-group">
+                  <button class="button button-sm button-secondary" id="refreshDashboardBtn" type="button" title="Refresh saved reports" data-testid="button-dashboard-refresh">
+                    <svg viewBox="0 0 16 16" fill="none" width="13" height="13" aria-hidden="true">
+                      <path d="M13.5 8A5.5 5.5 0 1 1 9.5 3L11 4.5M11 1.5v3H8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                    <span>Refresh</span>
+                  </button>
+                  <button class="button button-sm button-outline danger-btn" id="clearHistoryBtn" type="button" title="Clear all saved reports" data-testid="button-clear-history">
+                    <span>Clear All</span>
+                  </button>
+                </div>
+              </div>
+
+              <!-- Reports List Container -->
+              <div class="dashboard-reports-container" id="dashboardReportsContainer">
+                <div class="dashboard-loading" id="dashboardLoading" style="display: none;">
+                  <span>Loading saved security reports...</span>
+                </div>
+
+                <!-- Empty State -->
+                <div class="dashboard-empty-state" id="dashboardEmptyState" style="display: none;">
+                  <div class="empty-icon" aria-hidden="true">📂</div>
+                  <h4>No saved security reports</h4>
+                  <p id="dashboardEmptyMessage">You haven’t saved any URL security assessments yet. Analyze a web link above and click "Save Report" to build your private security scan history.</p>
+                </div>
+
+                <!-- Reports List -->
+                <ul class="dashboard-reports-list" id="dashboardReportsList" aria-label="Saved security reports">
+                  <!-- Dynamically populated -->
+                </ul>
+
+                <!-- Pagination Bar -->
+                <div class="dashboard-pagination-bar" id="dashboardPaginationBar" style="display: none;">
+                  <span id="paginationInfo">Showing 0 reports</span>
+                  <div class="pagination-buttons">
+                    <button class="button button-sm button-secondary" id="prevPageBtn" type="button" disabled>Previous</button>
+                    <button class="button button-sm button-secondary" id="nextPageBtn" type="button" disabled>Next</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
         </div>
       </main>
 
@@ -534,6 +773,65 @@
               Sign Out
             </button>
           </div>
+        </div>
+      </div>
+    </dialog>
+
+    <!-- Dialog: Report Detail Modal (Inspect full saved report) -->
+    <dialog id="reportDetailDialog" class="auth-dialog report-detail-dialog" aria-labelledby="reportDetailModalTitle">
+      <div class="auth-modal-content report-detail-content">
+        <div class="auth-modal-header">
+          <div style="min-width: 0;">
+            <p class="panel-kicker" style="margin: 0 0 2px 0;">Saved Scan Report</p>
+            <h3 id="reportDetailModalTitle" style="margin: 0; font-size: 1.15rem; word-break: break-all;">Analysis Findings</h3>
+          </div>
+          <button id="reportDetailClose" class="modal-close-btn" type="button" aria-label="Close dialog">
+            <svg viewBox="0 0 20 20" fill="none" width="18" height="18" aria-hidden="true">
+              <path d="M5 5l10 10M15 5L5 15" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+            </svg>
+          </button>
+        </div>
+
+        <div class="report-detail-body" id="reportDetailBody">
+          <!-- Populated dynamically -->
+        </div>
+
+        <div class="report-detail-footer">
+          <button class="button button-sm button-secondary" id="copyDetailReportBtn" type="button">
+            <span>Copy Full Report</span>
+          </button>
+          <button class="button button-sm button-outline danger-btn" id="deleteDetailReportBtn" type="button">
+            <span>Delete Report</span>
+          </button>
+          <span class="copy-feedback-msg" id="detailFeedback" aria-live="polite"></span>
+        </div>
+      </div>
+    </dialog>
+
+    <!-- Dialog: Clear All History Confirmation -->
+    <dialog id="confirmClearDialog" class="auth-dialog confirm-dialog" aria-labelledby="confirmClearTitle">
+      <div class="auth-modal-content confirm-modal-content">
+        <div class="auth-modal-header">
+          <h3 id="confirmClearTitle">Clear Scan History?</h3>
+          <button id="confirmClearClose" class="modal-close-btn" type="button" aria-label="Close dialog">
+            <svg viewBox="0 0 20 20" fill="none" width="18" height="18" aria-hidden="true">
+              <path d="M5 5l10 10M15 5L5 15" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+            </svg>
+          </button>
+        </div>
+        <div class="confirm-modal-body">
+          <p>This will permanently delete all saved security scan reports associated with your account.</p>
+          <p style="font-size: 0.85rem; color: var(--ink-faint); margin-top: 8px;">
+            Your user account, sessions, and credentials will not be affected. This action cannot be undone.
+          </p>
+        </div>
+        <div class="confirm-modal-footer">
+          <button class="button button-sm button-outline" id="cancelClearBtn" type="button">
+            Cancel
+          </button>
+          <button class="button button-sm button-primary danger-action-btn" id="executeClearBtn" type="button">
+            Yes, Clear All Reports
+          </button>
         </div>
       </div>
     </dialog>
